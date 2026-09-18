@@ -7,6 +7,7 @@ import { RenderPass } from "../../node_modules/three/examples/jsm/postprocessing
 import { UnrealBloomPass } from "../../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "../../node_modules/three/examples/jsm/postprocessing/OutputPass.js";
 import { buildWorld } from "./world.js";
+import { buildHeistWorld } from "./heist-world.js";
 import { Alien, Orb, glowTexture } from "./enemies.js";
 import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js";
 import { Net } from "./coop.js";
@@ -17,7 +18,9 @@ const store = { get(k, d){ try { const v = localStorage.getItem(k); return v == 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
-const shirtMode = () => G.mode === "escape" || G.mode === "fortress";
+const shirtMode = () => G.mode === "escape" || G.mode === "fortress" || G.mode === "heist";
+// the words on keys 1–9: in a heist only this wave's new words, elsewhere every word you own
+const ammoWords = () => G.mode === "heist" ? (G.waveWords || []) : (G.unlocked || []);
 const CAT = Object.fromEntries(D.categories.map(c => [c.id, c]));
 const POS_KO = { noun: "명사", verb: "동사", adjective: "형용사", adverb: "부사", other: "기타" };
 
@@ -48,7 +51,17 @@ composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .8, .5, .72);
 composer.addPass(bloom); composer.addPass(new OutputPass());
 addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
-const world = buildWorld(scene);
+// two maps, one shown at a time: the old town (district, escape, survival, fortress) and the bank hill (heist)
+const districtRoot = new THREE.Group(), heistRoot = new THREE.Group(); scene.add(districtRoot, heistRoot); heistRoot.visible = false;
+const districtWorld = buildWorld(districtRoot);
+let heistWorld = null;   // built the first time a heist starts
+let world = districtWorld;
+scene.background = world.env.bg; scene.fog = world.env.fog;
+const getHeistWorld = () => heistWorld || (heistWorld = buildHeistWorld(heistRoot));
+function useWorld(w){
+  world = w; G.world = w; districtRoot.visible = w === districtWorld; heistRoot.visible = w !== districtWorld;
+  scene.background = w.env.bg; scene.fog = w.env.fog; mmStatic = null;
+}
 
 /* ================================ player ================================ */
 const player = { body: { x: 0, y: 0, z: 62, vy: 0 }, feet: 0, pos: new THREE.Vector3(0, 1.7, 62), yaw: 0, pitch: 0, vel: new THREE.Vector3(), hp: 100, dashes: 2, dashCd: 0,
@@ -109,7 +122,7 @@ const G = {
   wakeAlien(a){ if (!a.wake()) return; ensureWord(a); G.quietT = 0;
     for (const o of G.aliens) if (o !== a && o.state === "idle" && !o.dead && o.pos.distanceTo(a.pos) < 11 && Math.abs(o.pos.y - a.pos.y) < 2) { o.wake(); ensureWord(o); } },
   spawnOrb(from, a){ const target = (G.targetFor ? G.targetFor(a) : player).pos.clone(); target.y -= .4; G.orbs.push(new Orb(scene, from, target)); SFX.orb(); },
-  slam(center, r, a){ SFX.slam(); G.shake = .5; burst(center.clone().setY(.2), 0xff2244, 40, 7); fxOut({ b: [center.x, center.y + .2, center.z, 0xff2244] });
+  slam(center, r, a){ if (G.mode === "heist") { heistSlam(center, r, a); return; } SFX.slam(); G.shake = .5; burst(center.clone().setY(.2), 0xff2244, 40, 7); fxOut({ b: [center.x, center.y + .2, center.z, 0xff2244] });
     for (const T of G.targets()) if (!T.dashing && Math.hypot(T.pos.x - center.x, T.pos.z - center.z) < r && Math.abs(T.feet - center.y) < 1.5) {
       hurt(24, center, T); if (T === player) { const d = player.pos.clone().sub(center).setY(0).normalize(); player.vel.addScaledVector(d, 9); } } },
   hurt: (n, from, t) => hurt(n, from, t),
@@ -119,6 +132,7 @@ window.__G = G;   // debugging handle
 
 /* ================================ word picking (spaced repetition light) ================================ */
 function nextWeakWord(){
+  if (G.mode === "heist" && G.waveWords && G.waveWords.length) return pick(G.waveWords);   // a heist wave only wears its 4 new words
   if (shirtMode() && G.unlocked.length) return pick(G.unlocked);   // 2 words = 50/50, 3 = 33% each …
   if (G.mode === "survival" && G.unlocked.length) {
     const L = G.unlocked, newest = L[L.length - 1];
@@ -281,11 +295,12 @@ function onKill(a, byTower = false){
   if (a.wrongHits === 0 && quick) G.perfect++;
   bpUnlockCheck();
   // health drops: rare in the horde modes (they'd clutter the map), a bit more when you're low
-  const dropP = (shirtMode() ? .06 : G.mode === "survival" ? .12 : .25) + (player.hp < 35 ? .1 : 0);
+  const dropP = G.mode === "heist" ? 0 : (shirtMode() ? .06 : G.mode === "survival" ? .12 : .25) + (player.hp < 35 ? .1 : 0);   // heist: you can't get hurt
   if (Math.random() < dropP) spawnPickup(a.pos.clone());
   if (G.speaking === a) { $("#helperText").dataset.for = ""; helperHide = 1.2; }
   if (G.tut) { if (G.tut.step === "kill") tutNext("dodge"); else if (G.tut.step === "dodge" || G.tut.step === "dodge2") tutNext("done"); }
   else if (G.mode === "escape") { if (a.special) specialKill(a); renderTop(); }
+  else if (G.mode === "heist") { if (a.special) heistBossKill(a); else G.waveKills++; renderTop(); }
   else if (G.mode === "fortress") { if (a.special) bossKill(a); else { G.waveKills++; G.coins++; } renderTop(); }
   else if (G.mode === "survival") { if (G.kills >= G.nextUnlockAt) { G.nextUnlockAt += 5; unlockWord(); } renderTop(); }
   else { renderTop(); if (!G.aliens.some(x => !x.dead)) setTimeout(victory, 1600); }
@@ -324,7 +339,7 @@ function spawnPickup(pos){
   while (G.pickups.length > 6) { const old = G.pickups.shift(); scene.remove(old.s); }   // never more than 6 on the map
 }
 function hurt(n, from, target = player){
-  if (G.over) return;
+  if (G.over || G.mode === "heist") return;   // heist: the aliens only want the loot
   if (target === partner) {   // host: the co-op partner got hit
     if (partner.dashing || partner.downed) return;
     partner.hp = Math.max(0, partner.hp - n); partner.lastHurt = G.time; fxOut({ hurt: n });
@@ -350,7 +365,7 @@ function objective(html){ $("#objective").innerHTML = html; }
 function objectiveFlash(html){ const prev = $("#objective").innerHTML; objective(html); clearTimeout(objTimer); objTimer = setTimeout(() => { if ($("#objective").innerHTML === html) objective(G.tut ? G.tut.text : prev); }, 2000); }
 
 /* ================================ HUD ================================ */
-function renderHP(){ $("#hpFill").style.width = player.hp + "%"; }
+function renderHP(){ $("#hpFill").style.width = (G.mode === "heist" && G.heist ? Math.max(0, G.heist.hp / G.heist.max * 100) : player.hp) + "%"; }   // heist: the bar is the loot
 function renderAmmo(){
   const w = G.loaded;
   $("#loadedWord").textContent = w ? (settings.labels === "ko" ? w.kr : meaning(w)) : "—";
@@ -358,11 +373,14 @@ function renderAmmo(){
   $("#rounds").innerHTML = Array.from({ length: G.maxRounds }, (_, i) => `<i class="${i < G.rounds ? "" : "off"}"></i>`).join("");
 }
 function renderQuick(){
-  const ids = (shirtMode() ? G.unlocked.slice(0, 9).map(w => w.id) : G.recentLoads) || [];
+  const ids = (shirtMode() ? ammoWords().slice(0, 9).map(w => w.id) : G.recentLoads) || [];
   $("#quick").innerHTML = ids.map((id, i) => { const w = D.words.find(x => x.id === id); return `<div class="q${G.loaded && G.loaded.id === id ? " on" : ""}"><div class="k">${i + 1}</div><div class="w">${esc(settings.labels === "ko" ? w.kr : meaning(w))}</div></div>`; }).join("");
 }
 function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
 function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
+  if (G.mode === "heist" && G.heist) {
+    $("#waveLbl").textContent = `🏦 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
+    $("#scoreLbl").textContent = `💰 LOOT ${Math.max(0, Math.ceil(G.heist.hp / G.heist.max * 100))}% · 🔐 ${G.heist.cracked}`; return; }
   if (G.mode === "fortress") { const z = world.zones[G.zone];
     $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
   if (G.mode === "escape") { const cp = world.route[Math.min(G.cp, world.route.length - 1)];
@@ -466,7 +484,11 @@ addEventListener("keydown", e => {
   if (G.noteOpen) { e.preventDefault();
     if (G.panel === "picker") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n && G.unlocked[+n[1] - 1]) { pickWordFor(G.pickerTower, G.unlocked[+n[1] - 1]); closePanel(); } if (k === "Escape" || k === "KeyE") closePanel(); return; }
     if (G.panel === "shop") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n) buy(+n[1] - 1); if (k === "Escape" || k === "KeyE") closePanel(); return; }
-    if (G.panel === "towerquiz" && (k === "Escape" || k === "KeyQ")) { closePanel(); return; }
+    if (G.panel === "brief") { if (k === "KeyE" || k === "Space" || k === "Enter" || k === "Escape") closeBrief();
+      const n = /^(?:Digit|Numpad)([1-4])$/.exec(k); if (n && G.waveWords[+n[1] - 1]) say([wordClip(G.waveWords[+n[1] - 1].id)], { interrupt: true }); return; }
+    if (G.panel === "htower") { const n = /^(?:Digit|Numpad)([1-5])$/.exec(k); if (n) htowerKey(+n[1]); if (k === "Escape" || k === "KeyE") closePanel(); return; }
+    // any build / repair / safe quiz can be left (Esc, Q or the Exit button) — only a hound bite can't
+    if (Q && Q.onPass && G.panel !== "bite" && (k === "Escape" || k === "KeyQ")) { closePanel(); return; }
     if (!Q) { if (k === "KeyE" || k === "Space" || k === "Enter") startQuiz(); return; }
     const n = /^(?:Digit|Numpad)([1-5])$/.exec(k); if (n) answerQuiz(+n[1] - 1); return; }
   if (k === "Tab" || k === "KeyB") { e.preventDefault(); if (G.backpackOpen) closeBackpack(true); else if (!G.paused) openBackpack(); return; }
@@ -483,18 +505,19 @@ addEventListener("keydown", e => {
   keys[k] = true;
   if (k === "Space") { e.preventDefault(); dash(); }
   if (k === "KeyR") startReload();
+  if (k === "KeyE" && G.mode === "heist" && G.interact) { heistUse(G.interact); return; }
   if (k === "KeyE" && G.mode === "fortress" && G.interact && G.interact.kind !== "revive" && !player.downed) { const it = G.interact; if (it.kind === "pad") towerQuiz(it.o); else if (it.kind === "tower") towerPicker(it.o); else if (it.kind === "event") useEvent(it.o); else openShop(); return; }
   if (k === "KeyF") nukeWord();
   if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a) announce(a, true); }
-  if (shirtMode()) { const n = /^Digit([1-9])$/.exec(k); if (n) { const w = G.unlocked[+n[1] - 1]; if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); } if (n) return; }
+  if (shirtMode()) { const n = /^Digit([1-9])$/.exec(k); if (n) { const w = ammoWords()[+n[1] - 1]; if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); } if (n) return; }
   const d = /^Digit([1-4])$/.exec(k);
   if (d && G.recentLoads && G.recentLoads[+d[1] - 1]) { const w = D.words.find(x => x.id === G.recentLoads[+d[1] - 1]); if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); }
 });
 addEventListener("keyup", e => { keys[e.code] = false; });
 // mouse wheel cycles through the words you know (escape / survival)
-addEventListener("wheel", e => { if (!G.running || G.backpackOpen || G.noteOpen || !G.unlocked || G.unlocked.length < 2 || (!shirtMode() && G.mode !== "survival")) return;
-  const i = Math.max(0, G.unlocked.findIndex(w => G.loaded && w.id === G.loaded.id)), n = G.unlocked.length;
-  loadWord(G.unlocked[(i + (e.deltaY > 0 ? 1 : -1) + n) % n]); }, { passive: true });
+addEventListener("wheel", e => { const L = ammoWords(); if (!G.running || G.backpackOpen || G.noteOpen || L.length < 2 || (!shirtMode() && G.mode !== "survival")) return;
+  const i = Math.max(0, L.findIndex(w => G.loaded && w.id === G.loaded.id)), n = L.length;
+  loadWord(L[(i + (e.deltaY > 0 ? 1 : -1) + n) % n]); }, { passive: true });
 function nearestAlien(){ let best = null, bd = 1e9; for (const a of G.aliens) if (!a.dead) { const d = a.pos.distanceTo(player.pos) - (a.active ? 1000 : 0); if (d < bd) { bd = d; best = a; } } return best; }
 function dash(){
   if (player.dashCd > 0 || player.dashing > 0 || !G.running) return;
@@ -572,14 +595,12 @@ function districtTick(rdt){
 // minimap: static layer drawn once, dynamic dots every few frames
 const MM = { S: 170, W: 136 };
 let mmStatic = null, mmT = 0;
-function mmXY(x, z){ return [(x + 68) / MM.W * MM.S, (z + 68) / MM.W * MM.S]; }
+function mmXY(x, z){ const b = world.bounds, W = b.x1 - b.x0; return [(x - b.x0) / W * MM.S, (z - b.z0) / W * MM.S]; }
 function drawMinimapStatic(){
   const c = document.createElement("canvas"); c.width = c.height = MM.S; const g2 = c.getContext("2d");
   g2.fillStyle = "#15131f"; g2.fillRect(0, 0, MM.S, MM.S);
   const rect = (x0, x1, z0, z1, col) => { const [a, b] = mmXY(x0, z0), [c2, d] = mmXY(x1, z1); g2.fillStyle = col; g2.fillRect(a, b, c2 - a, d - b); };
-  rect(-68, 68, -68, -14, "#231f33");       // upper town
-  rect(-68, -61, -14, 44, "#2c2640");       // wall walk
-  rect(-7, 7, -14, -4, "#3a3352"); rect(46, 54, -14, 4, "#3a3352"); rect(-68, -61, -32, -14, "#3a3352");   // stairs & ramps
+  for (const [x0, x1, z0, z1, col] of world.mm.areas || []) rect(x0, x1, z0, z1, col);   // raised ground, stairs & ramps
   for (const b of world.mm.solid) rect(b[0], b[1], b[2], b[3], "#4a4560");
   for (const b of world.mm.enter) { rect(b[0], b[1], b[2], b[3], "#2d4a47"); }
   g2.fillStyle = "#7cf7d4"; for (const [x, z] of world.mm.doors) { const [a, b] = mmXY(x, z); g2.fillRect(a - 2, b - 2, 4, 4); }
@@ -592,8 +613,10 @@ function drawMinimap(){
   for (const a of G.aliens) { if (a.dead) continue; const d = a.pos.distanceTo(player.pos);
     if (!a.active && d > 30) continue;   // sleeping aliens only show up when you're close
     const [x, y] = mmXY(a.pos.x, a.pos.z); g2.fillStyle = a.active ? "#ff4d6d" : "rgba(255,77,109,.45)"; g2.beginPath(); g2.arc(x, y, a.active ? 3 : 2.2, 0, 7); g2.fill(); }
-  if (G.mode === "fortress") { for (const p of fort.pads) { const [x, y] = mmXY(p.x, p.z); g2.strokeStyle = "#7cf7d4"; g2.strokeRect(x - 3, y - 3, 6, 6); }
-    for (const t of fort.towers) { const [x, y] = mmXY(t.x, t.z); g2.fillStyle = "#7cf7d4"; g2.fillRect(x - 3, y - 3, 6, 6); }
+  if (G.mode === "heist" && G.heist) { for (const sf of G.heist.safes) { if (sf.openT != null) continue; const [x, y] = mmXY(sf.x, sf.z); g2.fillStyle = "#ffcf5c"; g2.fillRect(x - 3.5, y - 3.5, 7, 7); g2.strokeStyle = "#2a1800"; g2.strokeRect(x - 3.5, y - 3.5, 7, 7); }
+    const [lx, ly] = mmXY(world.loot.x, world.loot.z); g2.fillStyle = G.time - (G.heist.lastHit || -9) < .4 ? "#ff4d6d" : "#ffcf5c"; g2.beginPath(); g2.arc(lx, ly, 5, 0, 7); g2.fill(); }
+  if (G.mode === "fortress" || G.mode === "heist") { for (const p of fort.pads) { const [x, y] = mmXY(p.x, p.z); g2.strokeStyle = "#7cf7d4"; g2.strokeRect(x - 3, y - 3, 6, 6); }
+    for (const t of fort.towers) { const [x, y] = mmXY(t.x, t.z); g2.fillStyle = t.broken ? "#8a3a4a" : "#7cf7d4"; g2.fillRect(x - 3, y - 3, 6, 6); }
     for (const ev of fort.events) { const [x, y] = mmXY(ev.x, ev.z); g2.fillStyle = "#c77dff"; g2.beginPath(); g2.arc(x, y, 3.5, 0, 7); g2.fill(); }
     for (const m of G.mercs) { const [x, y] = mmXY(m.x, m.z); g2.fillStyle = "#9fb8ff"; g2.beginPath(); g2.arc(x, y, 2.5, 0, 7); g2.fill(); }
     for (const h of G.dogs || []) { const [x, y] = mmXY(h.x, h.z); g2.fillStyle = h.sleepT > 0 ? "#6a4a20" : "#ff9a3a"; g2.beginPath(); g2.arc(x, y, 2.6, 0, 7); g2.fill(); }
@@ -796,7 +819,7 @@ function closeNote(){
   Q = null; G.calmT = Math.max(G.calmT, 5);   // a short breather after the quiz
   if (G.mode === "fortress") { G.waveActive = true; startWave(); if (G.unlocked.length >= 5) spawnMerchant(); }
 }
-$("#noteClose").onclick = () => { if (G.panel === "picker" || G.panel === "shop" || G.panel === "towerquiz") closePanel(); else if (!Q) startQuiz(); };
+$("#noteClose").onclick = () => { if (G.panel === "brief") closeBrief(); else if (CLOSABLE.has(G.panel) || EXITABLE.has(G.panel)) closePanel(); else if (!Q) startQuiz(); };
 /* ---------------- 🏰 fortress ---------------- */
 const fort = { pads: [], towers: [], merchant: null, events: [] };
 function signTexture(text, sub){
@@ -983,17 +1006,19 @@ function companionsTick(dt){
 }
 function towersTick(dt){
   for (const t of fort.towers) {
+    if (t.broken) continue;   // heist: smashed towers wait for a repair quiz
+    const lv = t.lvl || 0;
     t.crystal.rotation.y += dt * 2; t.cd -= dt;
     if (t.cd > 0) continue;
-    let best = null, bd = 22;
+    let best = null, bd = 22 + 3 * lv;
     for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || !(a.special || (a.word && a.word.id === t.word.id))) continue;
       const d = a.pos.distanceTo(t.crystalPos); if (d < bd && world.losClear(t.crystalPos, a.aimPoint())) { bd = d; best = a; } }
     // no enemy with this tower's word in range: the crystal dims — time to change its word?
     t.glow.material.opacity = best ? .7 : .15; t.crystal.material.color.setHex(best ? 0x7cf7d4 : 0x3a6a60);
     if (!best) { t.cd = .25; continue; }
-    t.cd = .95;
+    t.cd = .95 * Math.pow(.85, lv);
     tracer(t.crystalPos.clone(), best.aimPoint(), 0x7cf7d4); SFX.shotGood();
-    const dmg = 34 * (1 + .5 * ((G.up && G.up.tower) || 0)); burst(best.aimPoint(), 0x7cf7d4, 12, 4); best.stagger = best.special ? .05 : .15;
+    const dmg = 34 * (1 + .5 * ((G.up && G.up.tower) || 0)) * (1 + .4 * lv); burst(best.aimPoint(), 0x7cf7d4, 12, 4); best.stagger = best.special ? .05 : .15;
     if (best.damage(dmg)) onKill(best, true);
   }
 }
@@ -1009,17 +1034,18 @@ function nearestInteract(){
   return null;
 }
 // ---- panels on the paper (#note): tower quiz, tower word picker, shop. The world slows, it doesn't stop. ----
+const CLOSABLE = new Set(["picker", "shop", "htower"]), EXITABLE = new Set(["towerquiz", "hbuild", "hfix", "safe", "lootfix"]);
 function openPanel(kind, head){
-  G.noteOpen = true; G.panel = kind; G.timeScale = .15; document.exitPointerLock && document.exitPointerLock();
-  $("#note .nHead").textContent = head; $("#noteClose").hidden = kind !== "picker" && kind !== "shop" && kind !== "towerquiz"; $("#noteClose").textContent = kind === "towerquiz" ? "나가기 · Exit (Esc / Q)" : "닫기 · Close (Esc)";
+  G.noteOpen = true; G.panel = kind; G.timeScale = G.mode === "heist" ? .3 : .15; document.exitPointerLock && document.exitPointerLock();
+  $("#note .nHead").textContent = head; $("#noteClose").hidden = !CLOSABLE.has(kind) && !EXITABLE.has(kind); $("#noteClose").textContent = EXITABLE.has(kind) ? "나가기 · Exit (Esc / Q)" : "닫기 · Close (Esc)";
   $("#note").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow");
 }
 function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = null; G.panelClosedAt = performance.now(); $("#note").hidden = true; $("#vignette").classList.remove("slow"); lock();
   // Esc can't re-capture the mouse (browsers ignore it as a click): show "click to play" instead of leaving you stuck
   setTimeout(() => { if (document.pointerLockElement !== renderer.domElement && G.running && !G.paused && !G.over && !G.noteOpen && !G.backpackOpen) $("#clickToPlay").hidden = false; }, 200); }
 const justClosed = () => performance.now() - (G.panelClosedAt || 0) < 600;
-function knownQuestion(){
-  const known = G.unlocked, w = pick(known), kind = pick(["mean", "kr", "pos"]);
+function knownQuestion(w0){   // one question about a word you own (w0, or a random one)
+  const known = G.unlocked, w = w0 || pick(known), kind = pick(["mean", "kr", "pos"]);
   if (kind === "mean") { const wrong = distinct(G.pool.filter(x => x.pos === w.pos), 3, meaning, [w]); while (wrong.length < 3) wrong.push(...distinct(G.pool, 3 - wrong.length, meaning, [w, ...wrong]));
     return { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }; }
   if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
@@ -1076,6 +1102,11 @@ function buy(i){
 $("#noteBody").addEventListener("click", e => {
   const p = e.target.closest("[data-pick]"); if (p && G.panel === "picker") { pickWordFor(G.pickerTower, G.unlocked[+p.dataset.pick]); closePanel(); return; }
   const b = e.target.closest("[data-buy]"); if (b && G.panel === "shop") buy(+b.dataset.buy);
+});
+$("#noteBody").addEventListener("click", e => {   // heist: 🔊 on the new-word card, tower word / upgrade buttons
+  const sb = e.target.closest("[data-say]"); if (sb && G.panel === "brief") { say([wordClip(sb.dataset.say)], { interrupt: true }); return; }
+  const hw = e.target.closest("[data-hword]"); if (hw && G.panel === "htower") { htowerKey(+hw.dataset.hword + 1); return; }
+  if (e.target.closest("[data-hup]") && G.panel === "htower") htowerKey(5);
 });
 function nukeWord(){
   if (G.mode !== "fortress" || !G.up.nuke || G.nukeCd > 0 || !G.loaded) return;
@@ -1207,13 +1238,218 @@ function victory(){
   G.won = true; say([lineClip("clear")]); gameOver();
 }
 
+/* ================================ 🏦 heist ================================ */
+// You robbed the bank and hold its courtyard on the hill. You can't get hurt: the aliens want the 💰 loot.
+// Every wave brings 4 NEW words — they're your ammo (keys 1–4) and the words on the aliens' shirts.
+// Quizzes are the main thing you do, and they ask about EVERY word you've learned:
+//   🔨 pad → build a tower · 💥 broken tower → repair · 🔐 safe → money (tower upgrades) · 💰 loot → patch it up.
+const safeReward = () => 60 + 15 * G.wave;
+const LOOT_FIX = 150;
+function heistStart(){
+  const W = world;
+  G.heist = { hp: 1000, max: 1000, safes: [], safeT: 0, stolen: 0, cracked: 0, nextWaveT: 0, lastHit: -99, lastWarn: -99,
+    lootTgt: { pos: new THREE.Vector3(W.loot.x, W.loot.y + 1.7, W.loot.z), feet: W.loot.y, loot: true } };
+  W.loot.pieces.forEach(p => p.visible = true);
+  for (const [x, z] of W.pads) addPad(x, z);
+  for (let i = 0; i < 3; i++) spawnSafe();
+  heistWave();
+}
+function heistWave(){
+  const fresh = [];
+  for (let i = 0; i < 4; i++) { const w = nextNewWord(); if (!w) break; G.unlocked.push(w); G.newIds.add(w.id); markKill(w); fresh.push(w); }
+  if (!fresh.length) { G.won = true; say([lineClip("clear")]); gameOver(); return; }   // every word stolen
+  G.wave++; G.waveWords = fresh; loadWord(fresh[0]); renderQuick();
+  G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.waveSize = 14 + 2 * G.wave; G.calmT = 15; G.lastCalm = -1; G.spawnT = 3;
+  // towers: fully healed (broken ones stay broken) and spread over the new words
+  fort.towers.forEach((t, i) => { t.word = fresh[i % fresh.length]; if (!t.broken) t.hp = t.maxHp; towerSign(t); });
+  openBrief(fresh); renderTop(); renderHP();
+}
+function openBrief(words){
+  Q = null; openPanel("brief", `🏦 Wave ${G.wave} — 새 단어 · ${words.length} new words`); G.timeScale = 0;
+  $("#noteBody").innerHTML = `<div class="brief">${words.map((w, i) => `<div class="bRow"><span class="k">${i + 1}</span><b>${esc(w.kr)}</b><button data-say="${w.id}">🔊</button><span class="m">${esc(meaning(w))}</span><small>${POS_KO[w.pos] || ""} · ${CAT[w.cat].icon}</small></div>`).join("")}</div>
+    <div class="nHint">이번 웨이브의 탄창이에요 (키 1–4). 퀴즈는 지금까지 배운 모든 단어에서 나와요 · This wave's ammo (keys 1–4) — the aliens wear these words. Quizzes ask about every word you've learned.</div>`;
+  $("#noteClose").hidden = false; $("#noteClose").textContent = "시작 · Start (E)";
+  say(words.map(w => wordClip(w.id)));
+}
+function closeBrief(){
+  closePanel();
+  objective(`🏦 Wave ${G.wave}: ${G.waveSize} aliens, then the boss 👑 · 🔨 build towers · 🔐 crack safes for 💰 · guard the loot`);
+  setTimeout(() => { if (G.mode === "heist" && G.running && G.panel !== "brief") objective(""); }, 7000);
+}
+// ---- safes ----
+function spawnSafe(){
+  const H = G.heist, used = H.safes.filter(s => s.openT == null);
+  const spots = world.safeSpots.filter(([x, z]) => !used.some(s => Math.hypot(s.x - x, s.z - z) < 3) && Math.hypot(player.pos.x - x, player.pos.z - z) > 4);
+  if (!spots.length) return;
+  const [x, z] = pick(spots), y = world.groundY(x, z), grp = new THREE.Group(); grp.position.set(x, y, z);
+  const steel = new THREE.MeshStandardMaterial({ color: 0x5a6070, roughness: .35, metalness: .85 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 1.1), steel); body.position.y = .7; grp.add(body);
+  const hinge = new THREE.Group(); hinge.position.set(-.55, .7, .56); grp.add(hinge);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(1.08, 1.26, .08), new THREE.MeshStandardMaterial({ color: 0x6f7688, roughness: .3, metalness: .9 })); door.position.x = .54; hinge.add(door);
+  const dial = new THREE.Mesh(new THREE.CylinderGeometry(.2, .2, .08, 20), new THREE.MeshStandardMaterial({ color: 0xffcf5c, metalness: .9, roughness: .2 })); dial.rotation.x = Math.PI / 2; dial.position.set(.54, .1, .07); hinge.add(dial);
+  const gold = new THREE.Mesh(new THREE.BoxGeometry(.8, .4, .6), new THREE.MeshStandardMaterial({ color: 0xffc83d, metalness: .9, roughness: .25, emissive: 0x6a4a00, emissiveIntensity: .4 })); gold.position.y = .45; grp.add(gold);
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture("🔐 E", "금고 · safe"), transparent: true, depthWrite: false })); sign.position.y = 2.2; sign.scale.set(1.6, .8, 1); grp.add(sign);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffcf5c, transparent: true, opacity: .35, depthWrite: false, blending: THREE.AdditiveBlending })); glow.position.y = 1; glow.scale.set(3, 3, 1); grp.add(glow);
+  grp.rotation.y = Math.atan2(-x, -z);   // the door faces the middle of the map
+  scene.add(grp); H.safes.push({ g: grp, x, y, z, hinge, sign, openT: null });
+}
+function crackSafe(sf){
+  const H = G.heist, r = safeReward(); G.coins += r; H.stolen += r; H.cracked++; sf.openT = 0; H.safeT = Math.min(H.safeT, 6);
+  SFX.pickup(); burst(new THREE.Vector3(sf.x, sf.y + 1, sf.z), 0xffcf5c, 70, 7); floater(new THREE.Vector3(sf.x, sf.y + 1.8, sf.z), `+💰${r}`, "#ffcf5c", 34, 1.6);
+  objectiveFlash(`🔐 금고를 털었어요! · Safe cracked: <b>+💰${r}</b> — spend it on tower upgrades (E at a tower)`); renderTop();
+}
+// ---- towers ----
+function towerSign(t){
+  const old = t.sign.material.map;
+  t.sign.material.map = t.broken ? signTexture("💥 E", "수리 · repair") : signTexture(t.word.kr, `Lv ${(t.lvl || 0) + 1} · E`); t.sign.material.needsUpdate = true;
+  if (old && old !== t.sign.material.map) old.dispose();
+}
+function heistBuildTower(pad){
+  const w = G.loaded && G.waveWords.includes(G.loaded) ? G.loaded : G.waveWords[fort.towers.length % G.waveWords.length];
+  const t = buildTower(pad, w); Object.assign(t, { lvl: 0, maxHp: 120, hp: 120, broken: false, tgt: { pos: new THREE.Vector3(t.x, t.y + 1.7, t.z), feet: t.y, tower: t } });
+  towerSign(t); objectiveFlash(`🗼 탑 완성! · Tower built — it shoots <b>${esc(w.kr)}</b>. E at the tower: change its word or upgrade it (💰)`);
+  return t;
+}
+function breakTower(t){
+  t.broken = true; t.hp = 0; t.crystal.visible = false; t.glow.visible = false; t.g.rotation.z = .32; towerSign(t);
+  SFX.slam(); burst(t.crystalPos.clone(), 0x8a8aa0, 50, 6); objectiveFlash("💥 탑이 부서졌어요! · A tower was smashed — E at it to repair (quiz)");
+}
+function repairTower(t){
+  t.broken = false; t.hp = t.maxHp; t.crystal.visible = true; t.glow.visible = true; t.g.rotation.z = 0; towerSign(t);
+  SFX.pickup(); burst(t.crystalPos.clone(), 0x7cf7d4, 50, 6); objectiveFlash("🗼 수리 완료! · Tower repaired");
+}
+const towerUpCost = t => 100 + 60 * t.lvl;
+function openTowerPanel(t){ openPanel("htower", "🗼 탑 · Tower"); G.pickerTower = t; renderTowerPanel(); }
+function renderTowerPanel(){
+  const t = G.pickerTower, max = t.lvl >= 3;
+  $("#noteBody").innerHTML = `<div class="qHead">🗼 Lv ${t.lvl + 1}${max ? " (MAX)" : ""} · HP ${Math.ceil(t.hp)}/${t.maxHp} · 💰 ${G.coins}</div>
+    <div class="qPrompt">쏠 단어 · <small>Which word should it shoot?</small></div>
+    <div class="qOpts">${G.waveWords.map((w, i) => `<button data-hword="${i}" class="${w.id === t.word.id ? "right" : ""}"><span class="k">${i + 1}</span>${esc(w.kr)}</button>`).join("")}</div>
+    <div class="shop" style="margin-top:10px"><button data-hup="1" ${max ? "disabled" : ""}><span class="k">5</span><b>강화 · Upgrade</b> <small>+40% damage · +3 m range · shoots faster · +60 HP</small><span class="c">${max ? "MAX" : "💰 " + towerUpCost(t)}</span></button></div>`;
+}
+function htowerKey(n){
+  const t = G.pickerTower; if (!t) return;
+  if (n <= 4) { const w = G.waveWords[n - 1]; if (w) { t.word = w; towerSign(t); SFX.select(); renderTowerPanel(); } return; }
+  if (t.lvl >= 3) return;
+  const c = towerUpCost(t); if (G.coins < c) { SFX.empty(); objectiveFlash("💰 돈이 부족해요 · Not enough money — crack a safe 🔐"); return; }
+  G.coins -= c; t.lvl++; t.maxHp += 60; t.hp = t.maxHp; SFX.pickup(); burst(t.crystalPos.clone(), 0xffcf5c, 40, 6); towerSign(t); renderTowerPanel(); renderTop();
+}
+// ---- quizzes: half about this wave's new words, the rest about older words (struggled-with ones first) ----
+function heistQuestions(n){
+  const out = [], used = new Set(), older = G.unlocked.filter(w => !G.waveWords.includes(w));
+  for (let i = 0; i < n; i++) {
+    let cands = (older.length && Math.random() < .45 ? older : G.waveWords).filter(w => !used.has(w.id));
+    if (!cands.length) cands = G.unlocked.filter(w => !used.has(w.id)); if (!cands.length) cands = G.unlocked;
+    const wts = cands.map(w => { const st = stats[w.id]; return st ? Math.max(.4, 1 + st.w * 1.2 - st.r * .25) : 1.2; });
+    let r = Math.random() * wts.reduce((a, b) => a + b, 0), w = cands[0];
+    for (let k = 0; k < cands.length; k++) { r -= wts[k]; if (r <= 0) { w = cands[k]; break; } }
+    used.add(w.id); out.push(knownQuestion(w));
+  }
+  return out;
+}
+function heistQuiz(kind, head, n, onPass){
+  openPanel(kind, head);
+  Q = { qs: heistQuestions(n), i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel(); onPass(); } };
+  renderQuiz();
+}
+function heistUse(it){
+  const H = G.heist, o = it.o;
+  if (it.kind === "hbuild") heistQuiz("hbuild", "🔨 탑 짓기 퀴즈 · Build quiz", 3, () => { if (fort.pads.includes(o)) heistBuildTower(o); });
+  else if (it.kind === "hfix") heistQuiz("hfix", "💥 탑 수리 퀴즈 · Repair quiz", 2, () => { if (o.broken) repairTower(o); });
+  else if (it.kind === "safe") heistQuiz("safe", `🔐 금고 털기 · Crack the safe (+💰${safeReward()})`, 3, () => { if (o.openT == null) crackSafe(o); });
+  else if (it.kind === "lootfix") heistQuiz("lootfix", "💰 전리품 지키기 · Patch up the loot", 2, () => { H.hp = Math.min(H.max, H.hp + LOOT_FIX); renderHP(); SFX.heal(); objectiveFlash(`💰 +${LOOT_FIX} loot`); });
+  else if (it.kind === "htower") openTowerPanel(o);
+}
+function heistInteract(){
+  const H = G.heist, near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
+  for (const t of fort.towers) if (near(t, 2.6)) return t.broken ? { kind: "hfix", o: t, label: "E · 💥 탑 수리 — 퀴즈 · repair the tower (quiz)" }
+    : { kind: "htower", o: t, label: `E · 🗼 Lv ${t.lvl + 1} · ${esc(t.word.kr)} · HP ${Math.ceil(t.hp)}/${t.maxHp} — 단어 / 강화 · word & upgrade` };
+  for (const p of fort.pads) if (near(p, 2.2)) return { kind: "hbuild", o: p, label: "E · 🔨 탑 짓기 — 퀴즈 · build a tower (quiz)" };
+  for (const sf of H.safes) if (sf.openT == null && near(sf, 2.4)) return { kind: "safe", o: sf, label: `E · 🔐 금고 털기 — 퀴즈 · crack the safe (quiz) · 💰${safeReward()}` };
+  if (H.hp < H.max && near(world.loot, 4.2)) return { kind: "lootfix", o: world.loot, label: `E · 💰 전리품 지키기 — 퀴즈 · patch up the loot (+${LOOT_FIX})` };
+  return null;
+}
+// ---- the aliens: go for a tower that's in their way, else the loot ----
+function heistTarget(a){
+  const H = G.heist; if (!H) return player;
+  if (a.htgt && G.time < (a.htgtUntil || 0) && !(a.htgt.tower && a.htgt.tower.broken)) return a.htgt;
+  let best = H.lootTgt, bd = 9;   // a tower within 9 m of an alien draws it off the loot
+  for (const t of fort.towers) { if (t.broken || !t.tgt) continue; const d = Math.hypot(t.x - a.pos.x, t.z - a.pos.z); if (d < bd && Math.abs(t.y - a.pos.y) < 1.5) { bd = d; best = t.tgt; } }
+  a.htgt = best; a.htgtUntil = G.time + .5; return best;
+}
+function heistSlam(center, r, a){
+  const H = G.heist; if (!H || G.over) return;
+  SFX.slam(); burst(center.clone().setY(center.y + .2), 0xff2244, 30, 6);
+  if (player.pos.distanceTo(center) < 14) G.shake = .25;
+  const T = a.htgt || H.lootTgt, boss = a.special;
+  if (T.tower) { const t = T.tower; if (t.broken || Math.hypot(t.x - center.x, t.z - center.z) > r + .8) return;
+    t.hp -= boss ? 45 : 25; floater(t.crystalPos.clone(), boss ? "-45" : "-25", "#ff4d6d", 22, .8, "tw" + fort.towers.indexOf(t));
+    if (t.hp <= 0) breakTower(t); return; }
+  if (Math.hypot(world.loot.x - center.x, world.loot.z - center.z) > r + 2.4) return;
+  H.hp -= boss ? 60 : 20; H.lastHit = G.time; renderHP();
+  burst(new THREE.Vector3(world.loot.x, world.loot.y + 1.2, world.loot.z), 0xffcf5c, 24, 5);
+  if (G.time - H.lastWarn > 8) { H.lastWarn = G.time; objectiveFlash("🚨 전리품이 공격받고 있어요! · The loot is under attack!"); }
+  if (H.hp <= 0) { H.hp = 0; renderHP(); gameOver(); }
+}
+function heistBossKill(a){
+  const H = G.heist; G.shake = 1.2; SFX.slam(); SFX.kill();
+  const v = $("#vignette"); v.style.boxShadow = "inset 0 0 400px 200px rgba(255,230,160,.8)"; setTimeout(() => v.style.boxShadow = "", 350);
+  for (let i = 0; i < 4; i++) burst(a.aimPoint(), [0xffcf5c, 0xffffff, 0xff8a3a, 0x7cf7d4][i], 120, 16 + i * 4);
+  for (const o of G.aliens) if (!o.dead && o !== a) { burst(o.aimPoint(), 0xffcf5c, 30, 7); o.die(); G.kills++; G.score += 50; }
+  G.coins += 100; H.stolen += 100; G.bossOut = false; H.nextWaveT = 3;
+  objective("💥 보스 처치! +💰100 · Boss down — 4 new words are coming"); renderTop();
+}
+function heistTick(dt, rdt){
+  if (G.mode !== "heist" || G.over || !G.heist) return;
+  const H = G.heist, L = world.loot;
+  towersTick(dt);
+  for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
+  // safes: bobbing sign; a cracked one swings open, then disappears; new ones turn up (3 at a time)
+  for (const sf of H.safes) {
+    if (sf.openT == null) { sf.sign.position.y = 2.2 + Math.sin(G.time * 2 + sf.x) * .1; continue; }
+    sf.openT += dt; sf.hinge.rotation.y = -Math.min(1.9, sf.openT * 3);
+    if (sf.openT > 2.5) { scene.remove(sf.g); sf.gone = true; } }
+  H.safes = H.safes.filter(sf => !sf.gone);
+  if (H.safes.filter(sf => sf.openT == null).length < 3) { H.safeT -= dt; if (H.safeT <= 0) { spawnSafe(); H.safeT = 12; } }
+  // the loot pile shrinks as it takes damage
+  const keep = Math.ceil(H.hp / H.max * L.pieces.length); L.pieces.forEach((p, i) => p.visible = i < keep);
+  // interaction prompt
+  const it = !G.noteOpen && !G.backpackOpen ? heistInteract() : null;
+  $("#interact").hidden = !it; if (it) $("#interact").innerHTML = it.label; G.interact = it;
+  // arrow: the loot when it's under attack and you're away, else the nearest safe
+  let tgt = null;
+  if (G.time - H.lastHit < 3 && Math.hypot(L.x - player.pos.x, L.z - player.pos.z) > 12) tgt = { x: L.x, z: L.z, label: "🚨 전리품 · the loot" };
+  else { let bd = 1e9; for (const sf of H.safes) { if (sf.openT != null) continue; const d = Math.hypot(sf.x - player.pos.x, sf.z - player.pos.z); if (d < bd) { bd = d; tgt = d > 6 ? { x: sf.x, z: sf.z, label: "🔐 금고 · safe" } : null; } } }
+  $("#radar").hidden = !tgt || G.backpackOpen || G.noteOpen;
+  if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
+    $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`;
+    $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
+  // waves
+  if (H.nextWaveT > 0) { H.nextWaveT -= dt; if (H.nextWaveT <= 0) { if (G.noteOpen) H.nextWaveT = .2; else heistWave(); } return; }
+  if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
+  if (G.waveKills >= G.waveSize && !G.bossOut) {
+    G.bossOut = true; const [ex, ez] = pick(world.entries), f = world.freeSpot(ex, ez);
+    const a = new Alien(scene, new THREE.Vector3(f.x, world.groundY(f.x, f.z), f.z), pick(G.waveWords), { rise: true, special: true, shirt: "?", hp: 500 + 120 * G.wave, speed: 1.25, skills: { orb: false, slam: true } });
+    a.id = "boss" + G.wave; G.aliens.push(a);
+    objectiveFlash("👑 보스 등장! · The <b>boss</b> is coming for the loot — any word hurts it"); SFX.charge(); renderTop();
+  }
+  const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(22, 8 + G.wave * 2);
+  G.spawnT -= dt;
+  if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
+    G.spawnT = Math.max(.7, 1.8 - G.wave * .07); G.waveSpawned++;
+    const [ex, ez] = pick(world.entries);
+    spawnAlienShirt(new THREE.Vector3(ex + rnd(-3, 3), 0, ez + rnd(-3, 3)), nextWeakWord(), { rise: true, speed: Math.min(2.4, rnd(1.4, 1.8) + G.wave * .04), skills: { orb: false, slam: true } });
+  }
+}
+function clearHeist(){ if (G.heist) for (const sf of G.heist.safes) scene.remove(sf.g); G.heist = null; G.waveWords = []; }
+
 /* ================================ 👥 co-op (fortress) ================================ */
 // host-authoritative: the host runs everything; the client moves/shoots locally and mirrors the host's world.
 const isHost = () => !!(G.coop && G.coop.role === "host");
 const isClient = () => !!(G.coop && G.coop.role === "client");
 const partner = { pos: new THREE.Vector3(0, 1.7, 60), feet: 0, yaw: 0, pitch: 0, hp: 100, downed: false, bleedT: 0, dashing: 0, stuck: null, lastHurt: -99, seen: false, target: new THREE.Vector3(0, 1.7, 60), avatar: null, reviving: 0 };
 G.targets = () => { const t = []; if (!player.downed) t.push(player); if (isHost() && partner.seen && !partner.downed) t.push(partner); return t.length ? t : [player]; };
-G.targetFor = a => { let best = player, bd = 1e9; for (const t of G.targets()) { const d = (t.pos.x - a.pos.x) ** 2 + (t.pos.z - a.pos.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; };
+G.targetFor = a => { if (G.mode === "heist") return heistTarget(a); let best = player, bd = 1e9; for (const t of G.targets()) { const d = (t.pos.x - a.pos.x) ** 2 + (t.pos.z - a.pos.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; };
 function houndTarget(h){ let best = player, bd = 1e9; for (const t of G.targets()) { if (t === partner && partner.stuck) continue; const d = (t.pos.x - h.x) ** 2 + (t.pos.z - h.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; }
 function fxOut(ev){ if (isHost()) (G.fxQ || (G.fxQ = [])).push(ev); }
 function coopAct(ev){ if (isClient()) (G.actQ || (G.actQ = [])).push(ev); }
@@ -1461,7 +1697,7 @@ $("#joinBtn").onclick = () => {
 
 /* ================================ start / pause / over ================================ */
 function resetRun(){
-  clearFortifications(false); $("#interact").hidden = true;
+  clearFortifications(false); clearHeist(); $("#interact").hidden = true;
   removeHounds(false);
   (G.mercs || []).forEach(m => scene.remove(m.g)); if (G.deer) scene.remove(G.deer.g);
   if (G.note) scene.remove(G.note.s); $("#note").hidden = true; beam.visible = false;
@@ -1476,10 +1712,12 @@ function resetRun(){
   $("#killfeed").innerHTML = ""; $("#helper").hidden = true;
 }
 function startGame(tutorial, mode = "district"){
-  G.mode = mode; if (mode === "survival" || mode === "escape" || mode === "fortress") tutorial = false;
+  G.mode = mode; if (mode === "survival" || mode === "escape" || mode === "fortress" || mode === "heist") tutorial = false;
   G.pool = selectedPool(); if (G.pool.length < 6) return;
   initAudio(); setVolume(settings.vol); preload(G.pool.map(w => w.id));
+  useWorld(mode === "heist" ? getHeistWorld() : districtWorld);
   resetRun();
+  $("#health .lbl").textContent = mode === "heist" ? "💰 LOOT" : "HP";
   G.running = true; $("#menu").hidden = true; $("#over").hidden = true; $("#hud").hidden = false;
   if (tutorial) { pedestal.visible = true; G.tut = { step: "move", text: TUT.move.text }; objective(TUT.move.text); }
   else if (mode === "fortress" && isClient()) { pedestal.visible = false; player.hasGun = true; gun.visible = true;
@@ -1487,6 +1725,9 @@ function startGame(tutorial, mode = "district"){
   else if (mode === "fortress") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); G.waveActive = true; setupZone(0); startWave();
     helperShow(`첫 단어: <b class="typed">${esc(w0.kr)}</b> <small>= ${esc(meaning(w0))} · walk to a 🔨 pad + E to build a tower (quiz)</small>`, 7); say([wordClip(w0.id)]); }
+  else if (mode === "heist") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
+    heistStart();
+    helperShow("🏦 <small>You can't get hurt — guard the 💰 loot. 🔨 pads = towers, 🔐 safes = money for upgrades. Every quiz asks about all your words.</small>", 9); }
   else if (mode === "escape") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); placeBeam();
     objective(`🏃 탈출 모드 · Fight your way to the <b>cathedral altar</b> — follow the golden light. Read the word on their shirts! <small>1–9 / mouse wheel = switch word · first word: <b>${esc(w0.kr)}</b> = ${esc(meaning(w0))}</small>`);
@@ -1499,7 +1740,7 @@ function startGame(tutorial, mode = "district"){
     helperShow("가방은 <b>Tab</b>! <small>Look at an alien to hear its word · Tab = backpack</small>", 4); say([lineClip("listen")]); }
   renderHP(); renderAmmo(); renderDash(); renderTop(); renderQuick(); drawGunScreen();
   if (G.coop) coopBegin();
-  lock();
+  if (!G.noteOpen) lock();   // (the heist opens with the new-word card: the mouse stays free for it)
 }
 // co-op fortress never freezes or slows the world: menus/panels only cover your own screen
 const liveCoop = () => !!(G.coop && G.mode === "fortress");
@@ -1511,7 +1752,11 @@ function gameOver(){
   if (isHost()) setTimeout(() => G.coop && G.coop.net.send({ t: "over", stats: $("#overStats").innerHTML, title: $("#over .logo").textContent }), 50);
   G.over = true; G.running = false; closeBackpack(false); $("#note").hidden = true; G.noteOpen = false; G.panel = null; Q = null; document.exitPointerLock && document.exitPointerLock();
   const best = store.get("wa_best", 0); if (G.score > best) store.set("wa_best", G.score);
-  if (G.mode === "fortress") {
+  if (G.mode === "heist") {
+    const bw = store.get("wa_best_heist", 0), cleared = G.won ? G.wave : G.wave - 1, isBest = cleared > bw; if (isBest) store.set("wa_best_heist", cleared);
+    $("#overStats").innerHTML = [[cleared, isBest ? "🏆 waves (best)" : `waves · best ${Math.max(bw, cleared)}`], [G.unlocked.length, "words learned"], ["💰 " + (G.heist ? G.heist.stolen : 0), "money stolen"], [G.heist ? G.heist.cracked : 0, "safes cracked"]].map(([b, s2]) => `<div><b>${b}</b><span>${s2}</span></div>`).join("");
+    $("#reviewList").innerHTML = G.unlocked.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${POS_KO[w.pos]}</small></div>`).join("");
+  } else if (G.mode === "fortress") {
     const bw = store.get("wa_best_fort", 0), cleared = G.wave - 1, isBest = cleared > bw; if (isBest) store.set("wa_best_fort", cleared);
     $("#overStats").innerHTML = [[cleared, isBest ? "🏆 waves (best)" : `waves · best ${Math.max(bw, cleared)}`], [G.kills, "enemies"], [G.unlocked.length, "words learned"], ["💰 " + G.coins, "coins left"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
     $("#reviewList").innerHTML = G.unlocked.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${POS_KO[w.pos]}</small></div>`).join("");
@@ -1526,7 +1771,7 @@ function gameOver(){
   } else $("#overStats").innerHTML = [["★ " + G.score, "score"], [G.kills, "aliens"], [G.perfect, "perfect"], [(G.total - G.aliens.filter(a => !a.dead).length) + "/" + G.total, "cleared"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
   const list = [...G.runMissed.keys()].map(id => D.words.find(w => w.id === id));
   if (!shirtMode()) $("#reviewList").innerHTML = list.length ? list.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${CAT[w.cat].icon}</small></div>`).join("") : `<div>👏 no weak words this run</div>`;
-  $("#over .logo").textContent = G.mode === "district" && G.won ? "구역 정화 완료! · District cleared" : G.mode === "survival" ? "⏱ 생존 끝 · Survival over" : G.mode === "escape" ? (G.won ? "🏃 탈출 성공! · You escaped" : "🏃 탈출 실패 · Didn't make it") : G.mode === "fortress" ? `🏰 요새 함락 · Wave ${G.wave}` : "Game over";
+  $("#over .logo").textContent = G.mode === "district" && G.won ? "구역 정화 완료! · District cleared" : G.mode === "survival" ? "⏱ 생존 끝 · Survival over" : G.mode === "escape" ? (G.won ? "🏃 탈출 성공! · You escaped" : "🏃 탈출 실패 · Didn't make it") : G.mode === "fortress" ? `🏰 요새 함락 · Wave ${G.wave}` : G.mode === "heist" ? (G.won ? "🏦 완벽한 강도! · Every word stolen" : `🏦 전리품을 뺏겼어요 · Loot lost — wave ${G.wave}`) : "Game over";
   setTimeout(() => { $("#hud").hidden = true; $("#over").hidden = false; }, 900);
 }
 $("#reviewList").onclick = e => { const b = e.target.closest("[data-say]"); if (b) say([wordClip(b.dataset.say)], { interrupt: true }); };
@@ -1541,6 +1786,7 @@ $("#tutBtn").onclick = solo(() => startGame(true));
 $("#survBtn").onclick = solo(() => startGame(false, "survival"));
 $("#escBtn").onclick = solo(() => startGame(false, "escape"));
 $("#fortBtn").onclick = solo(() => startGame(false, "fortress"));
+$("#heistBtn").onclick = solo(() => startGame(false, "heist"));
 
 /* ================================ menu ================================ */
 const UI = {
@@ -1562,8 +1808,9 @@ function renderMenu(){
   $("#starChip").classList.toggle("on", settings.star);
   const n = selectedPool().length;
   $("#poolCount").textContent = n >= 6 ? `🎒 ${n} words in your backpack` : "Pick at least 6 words";
-  $("#poolCount").classList.toggle("bad", n < 6); $("#playBtn").disabled = $("#tutBtn").disabled = $("#survBtn").disabled = $("#escBtn").disabled = $("#fortBtn").disabled = n < 6;
+  $("#poolCount").classList.toggle("bad", n < 6); $("#playBtn").disabled = $("#tutBtn").disabled = $("#survBtn").disabled = $("#escBtn").disabled = $("#fortBtn").disabled = $("#heistBtn").disabled = n < 6;
   const fb = store.get("wa_best_fort", 0); $("#fortBtn").textContent = `🏰 요새 모드 · Fortress — waves, towers by quiz, a new word per boss${fb ? `  (best: wave ${fb})` : ""}`;
+  const hb = store.get("wa_best_heist", 0); $("#heistBtn").textContent = `🏦 은행 강도 · Heist — 4 new words a wave, crack safes, guard the loot${hb ? `  (best: wave ${hb})` : ""}`;
   const eb = store.get("wa_best_esc", 0); $("#escBtn").textContent = `🏃 탈출 모드 · Escape — read their shirts, reach the cathedral${eb ? `  (best ${Math.floor(eb / 60)}:${String(eb % 60).padStart(2, "0")})` : ""}`;
   const sb = store.get("wa_best_surv", 0); $("#survBtn").textContent = `⏱ 생존 모드 · Survival — start with 1 word${sb ? `  (best ${Math.floor(sb / 60)}:${String(sb % 60).padStart(2, "0")})` : ""}`;
 }
@@ -1653,6 +1900,7 @@ function update(rdt){
   survivalTick(dt);
   escapeTick(dt, rdt);
   fortressTick(dt, rdt);
+  heistTick(dt, rdt);
   coopTick(dt, rdt);
   mmT -= rdt; if (mmT <= 0) { mmT = .1; drawMinimap(); }
   // ---- FX ----
@@ -1684,4 +1932,4 @@ function frame(){
 drawGunScreen();
 requestAnimationFrame(frame);
 window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
-window.__api = { partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, world, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
+window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, heist: () => G.heist, heistWave, heistUse, heistInteract, spawnSafe, crackSafe, breakTower, repairTower, heistTarget, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };

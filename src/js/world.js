@@ -12,14 +12,14 @@ const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 214
 const rr = (a, b) => a + rand() * (b - a);
 export const STEP = .6;
 
-function canvasTex(w, h, draw, repeat){
+export function canvasTex(w, h, draw, repeat){
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   draw(c.getContext("2d"), w, h);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
   return t;
 }
-function cobbles(g, w, h){
+export function cobbles(g, w, h){
   g.fillStyle = "#1c1b22"; g.fillRect(0, 0, w, h);
   for (let y = 0; y < h; y += 32) for (let x = (y / 32) % 2 ? -16 : 0; x < w; x += 32) {
     const l = 26 + rand() * 18; g.fillStyle = `rgb(${l},${l - 2},${l + 6})`;
@@ -27,19 +27,19 @@ function cobbles(g, w, h){
     g.fillStyle = "rgba(255,255,255,.04)"; g.beginPath(); g.roundRect(x + 5, y + 4, 16, 8, 4); g.fill();
   }
 }
-function stoneWall(g, w, h){
+export function stoneWall(g, w, h){
   g.fillStyle = "#2a2833"; g.fillRect(0, 0, w, h);
   for (let y = 0; y < h; y += 24) for (let x = (y / 24) % 2 ? -30 : 0; x < w; x += 60) {
     const l = 36 + rand() * 16; g.fillStyle = `rgb(${l},${l - 3},${l + 4})`; g.fillRect(x + 1, y + 1, 58, 22);
   }
   g.fillStyle = "rgba(0,0,0,.25)"; for (let i = 0; i < 40; i++) g.fillRect(rand() * w, rand() * h, 2 + rand() * 30, 2 + rand() * 4);
 }
-function planks(g, w, h){
+export function planks(g, w, h){
   g.fillStyle = "#2b1d14"; g.fillRect(0, 0, w, h);
   for (let y = 0; y < h; y += 32) { const l = 46 + rand() * 18; g.fillStyle = `rgb(${l},${l * .7 | 0},${l * .5 | 0})`; g.fillRect(0, y + 1, w, 30);
     g.fillStyle = "rgba(0,0,0,.35)"; g.fillRect(rand() * w, y, 3, 32); }
 }
-function gothicWindow(lit){
+export function gothicWindow(lit){
   return (g, w, h) => {
     g.clearRect(0, 0, w, h);
     const path = () => { g.beginPath(); g.moveTo(8, h - 6); g.lineTo(8, h * .42); g.quadraticCurveTo(8, 10, w / 2, 4); g.quadraticCurveTo(w - 8, 10, w - 8, h * .42); g.lineTo(w - 8, h - 6); g.closePath(); };
@@ -102,17 +102,18 @@ export function groundY(x, z){
   return y;
 }
 
+// scene = the Group this world is built into (the game shows one world at a time)
 export function buildWorld(scene){
   seed = 1337;
   const colliders = [];   // 3D boxes: {minX,maxX,minY,maxY,minZ,maxZ}
   const addCol = (x0, x1, z0, z1, y0, y1) => colliders.push({ minX: Math.min(x0, x1), maxX: Math.max(x0, x1), minZ: Math.min(z0, z1), maxZ: Math.max(z0, z1), minY: y0, maxY: y1 });
   const doors = [];       // nav helpers: [{out:{x,z}, in:{x,z}}]
   const lightSpots = [];  // positions the moving light pool snaps to
-  const mm = { solid: [], enter: [], doors: [] };   // minimap drawing data
+  const mm = { solid: [], enter: [], doors: [], areas: [   // minimap drawing data; areas = raised ground [x0,x1,z0,z1,colour]
+    [-68, 68, -68, -14, "#231f33"], [-68, -61, -14, 44, "#2c2640"], [-7, 7, -14, -4, "#3a3352"], [46, 54, -14, 4, "#3a3352"], [-68, -61, -32, -14, "#3a3352"]] };
 
   // ---- sky / fog / light ----
-  scene.background = new THREE.Color(0x0e1222);
-  scene.fog = new THREE.FogExp2(0x151a2c, 0.013);   // lighter night so enemies read better, still gothic
+  const env = { bg: new THREE.Color(0x0e1222), fog: new THREE.FogExp2(0x151a2c, 0.013) };   // lighter night so enemies read better, still gothic
   scene.add(new THREE.HemisphereLight(0x8a90c8, 0x2a2232, 1.35));
   const moonLight = new THREE.DirectionalLight(0xb4c6ff, 1.0); moonLight.position.set(-40, 80, -60); scene.add(moonLight);
   const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(256, 256, (g, w) => {
@@ -311,6 +312,40 @@ export function buildWorld(scene){
   dustGeo.setAttribute("position", new THREE.BufferAttribute(dp, 3));
   scene.add(new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xaab0d8, size: .06, transparent: true, opacity: .5, depthWrite: false })));
 
+  const P = makePhysics(groundY, BOUNDS, colliders, doors);
+  return {
+    ...P, colliders, groundY, nests: NESTS, mm, bounds: BOUNDS, env,
+    // escape route (left-4-dead style): checkpoints in order, the last one is the way out
+    route: [
+      { x: -10, z: 7, ko: "시장", en: "Market square" },
+      { x: 40, z: 7, ko: "동쪽 마당", en: "East yard" },
+      { x: 50, z: -20, ko: "윗마을", en: "Upper town (east ramp)" },
+      { x: -64.5, z: 18, ko: "성벽 위", en: "On the city wall" },
+      { x: 0, z: -54, ko: "대성당 제단", en: "Cathedral altar — escape!" },
+    ],
+    // fortress mode: fortification sites (4 build pads + a merchant spot each), used in this order
+    zones: [
+      { ko: "성문 마당", en: "Gate courtyard", x: 0, z: 52, pads: [[-9, 46], [9, 46], [-9, 57], [9, 55]], shop: [0, 60] },
+      { ko: "시장", en: "Market square", x: 2, z: 4, pads: [[-6, -1], [8, -1], [-6, 10], [10, 9]], shop: [2, 11] },
+      { ko: "동쪽 마당", en: "East yard", x: 42, z: 8, pads: [[35, 2], [43, 13], [35, 13], [51, 12]], shop: [42, 3] },
+      { ko: "윗마을 동쪽", en: "Upper town east", x: 40, z: -21, pads: [[35, -16], [46, -16], [35, -27], [46, -27]], shop: [41, -21] },
+      { ko: "대성당 광장", en: "Cathedral plaza", x: 0, z: -24, pads: [[-11, -20], [11, -20], [-11, -29], [11, -29]], shop: [0, -30] },
+      { ko: "서쪽 골목", en: "West quarter", x: -46, z: -8, pads: [[-55, -5], [-38, -5], [-55, -12], [-38, -12]], shop: [-46, -11] },
+    ],
+    spawn: { x: 0, z: 62 }, gunSpot: new THREE.Vector3(0, 0, 51),
+    tutorialSpawns: [new THREE.Vector3(0, 0, 30), new THREE.Vector3(0, 0, 32)],
+    update(t, dt, px, pz){
+      for (let i = 0; i < dustN; i++) { dp[i * 3 + 1] -= dt * .15; dp[i * 3] += Math.sin(t * .3 + i) * dt * .1; if (dp[i * 3 + 1] < 0) dp[i * 3 + 1] = 16; }
+      dustGeo.attributes.position.needsUpdate = true;
+      poolT -= dt; if (poolT <= 0) { poolT = .4; updateLights(px, pz); }
+      pool.forEach((L, i) => L.intensity = (L.userData.power || 0) + Math.sin(t * 7 + i * 3) * 1.2);
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ physics (shared by every world) ------------------------------------------------------------------ */
+// groundY(x,z) = walkable height, colliders = 3D boxes, doors = nav helpers through doorways
+export function makePhysics(groundY, BOUNDS, colliders, doors = []){
   /* ------------------------------ physics helpers ------------------------------ */
   const insideCol = (x, z, y, r) => colliders.some(c => c.minY < y + 1.7 && c.maxY > y + .3 && x > c.minX - r && x < c.maxX + r && z > c.minZ - r && z < c.maxZ + r);
   // push a circle (feet at e.y) out of colliders that overlap its height
@@ -361,7 +396,7 @@ export function buildWorld(scene){
       if (y - py > STEP || py - y > 1.2 || insideCol(x, z, y, r)) return false; py = y; }
     return true;
   }
-
+  
   /* ------------------------------ nav graph (grid + door nodes) + A* ------------------------------ */
   const nodes = [], adj = [];
   const G4 = 4;
@@ -399,46 +434,18 @@ export function buildWorld(scene){
     const path = []; for (let c = t; c !== undefined && c !== s; c = came.get(c)) path.unshift({ x: nodes[c].x, z: nodes[c].z });
     return path;
   }
-
+  
   // nearest spot around (x,z) where an alien fits (rings of 0.5 m out to 4 m)
   function freeSpot(x, z){
     for (let r = 0; r <= 4; r += .5) for (let k = 0; k < (r ? 12 : 1); k++) { const a = k / 12 * Math.PI * 2, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
       if (!insideCol(px, pz, groundY(px, pz), .5)) return { x: px, z: pz }; }
     return { x, z };
   }
-  return {
-    colliders, groundY, freeSpot, moveEntity, rayBlock, losClear, walkable, findPath, nests: NESTS, mm, bounds: BOUNDS,
-    navSize: nodes.length,
-    // a random walkable spot between min and max metres from (px,pz) — survival spawns
-    farSpot(px, pz, min, max){
-      const c = nodes.filter(n => { const d = Math.hypot(n.x - px, n.z - pz); return d > min && d < max; });
-      const n = c.length ? c[Math.floor(Math.random() * c.length)] : nodes[Math.floor(Math.random() * nodes.length)];
-      return new THREE.Vector3(n.x, n.y, n.z);
-    },
-    // escape route (left-4-dead style): checkpoints in order, the last one is the way out
-    route: [
-      { x: -10, z: 7, ko: "시장", en: "Market square" },
-      { x: 40, z: 7, ko: "동쪽 마당", en: "East yard" },
-      { x: 50, z: -20, ko: "윗마을", en: "Upper town (east ramp)" },
-      { x: -64.5, z: 18, ko: "성벽 위", en: "On the city wall" },
-      { x: 0, z: -54, ko: "대성당 제단", en: "Cathedral altar — escape!" },
-    ],
-    // fortress mode: fortification sites (4 build pads + a merchant spot each), used in this order
-    zones: [
-      { ko: "성문 마당", en: "Gate courtyard", x: 0, z: 52, pads: [[-9, 46], [9, 46], [-9, 57], [9, 55]], shop: [0, 60] },
-      { ko: "시장", en: "Market square", x: 2, z: 4, pads: [[-6, -1], [8, -1], [-6, 10], [10, 9]], shop: [2, 11] },
-      { ko: "동쪽 마당", en: "East yard", x: 42, z: 8, pads: [[35, 2], [43, 13], [35, 13], [51, 12]], shop: [42, 3] },
-      { ko: "윗마을 동쪽", en: "Upper town east", x: 40, z: -21, pads: [[35, -16], [46, -16], [35, -27], [46, -27]], shop: [41, -21] },
-      { ko: "대성당 광장", en: "Cathedral plaza", x: 0, z: -24, pads: [[-11, -20], [11, -20], [-11, -29], [11, -29]], shop: [0, -30] },
-      { ko: "서쪽 골목", en: "West quarter", x: -46, z: -8, pads: [[-55, -5], [-38, -5], [-55, -12], [-38, -12]], shop: [-46, -11] },
-    ],
-    spawn: { x: 0, z: 62 }, gunSpot: new THREE.Vector3(0, 0, 51),
-    tutorialSpawns: [new THREE.Vector3(0, 0, 30), new THREE.Vector3(0, 0, 32)],
-    update(t, dt, px, pz){
-      for (let i = 0; i < dustN; i++) { dp[i * 3 + 1] -= dt * .15; dp[i * 3] += Math.sin(t * .3 + i) * dt * .1; if (dp[i * 3 + 1] < 0) dp[i * 3 + 1] = 16; }
-      dustGeo.attributes.position.needsUpdate = true;
-      poolT -= dt; if (poolT <= 0) { poolT = .4; updateLights(px, pz); }
-      pool.forEach((L, i) => L.intensity = (L.userData.power || 0) + Math.sin(t * 7 + i * 3) * 1.2);
-    },
-  };
+  // a random walkable spot between min and max metres from (px,pz)
+  function farSpot(px, pz, min, max){
+    const c = nodes.filter(n => { const d = Math.hypot(n.x - px, n.z - pz); return d > min && d < max; });
+    const n = c.length ? c[Math.floor(Math.random() * c.length)] : nodes[Math.floor(Math.random() * nodes.length)];
+    return new THREE.Vector3(n.x, n.y, n.z);
+  }
+  return { collide, moveEntity, rayBlock, losClear, walkable, findPath, freeSpot, farSpot, insideCol, navSize: nodes.length };
 }
