@@ -444,7 +444,7 @@ function lock(){ const c = renderer.domElement; if (document.pointerLockElement 
 document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === renderer.domElement;
   // Esc while the mouse is captured releases it without a keydown: treat losing the lock as pause
-  if (!locked && G.running && !G.paused && !G.over && !G.backpackOpen && !G.noteOpen && G.wasLocked) pauseGame();
+  if (!locked && G.running && !G.paused && !G.over && !G.backpackOpen && !G.noteOpen && G.wasLocked && !justClosed()) pauseGame();
   G.wasLocked = locked;
   $("#clickToPlay").hidden = locked || !G.running || G.paused || G.over || G.backpackOpen;
 });
@@ -466,7 +466,7 @@ addEventListener("keydown", e => {
   if (G.noteOpen) { e.preventDefault();
     if (G.panel === "picker") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n && G.unlocked[+n[1] - 1]) { pickWordFor(G.pickerTower, G.unlocked[+n[1] - 1]); closePanel(); } if (k === "Escape" || k === "KeyE") closePanel(); return; }
     if (G.panel === "shop") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n) buy(+n[1] - 1); if (k === "Escape" || k === "KeyE") closePanel(); return; }
-    if (G.panel === "towerquiz" && k === "Escape") { closePanel(); return; }
+    if (G.panel === "towerquiz" && (k === "Escape" || k === "KeyQ")) { closePanel(); return; }
     if (!Q) { if (k === "KeyE" || k === "Space" || k === "Enter") startQuiz(); return; }
     const n = /^(?:Digit|Numpad)([1-5])$/.exec(k); if (n) answerQuiz(+n[1] - 1); return; }
   if (k === "Tab" || k === "KeyB") { e.preventDefault(); if (G.backpackOpen) closeBackpack(true); else if (!G.paused) openBackpack(); return; }
@@ -479,7 +479,7 @@ addEventListener("keydown", e => {
     const d = /^Digit(\d)$/.exec(k); if (d) { const i = (+d[1] + 9) % 10; if (i < cats.length) { G.bpTab = i; renderBackpack(); SFX.select(); } }
     return;
   }
-  if (k === "Escape") { if (!G.paused) pauseGame(); return; }
+  if (k === "Escape") { if (!G.paused && !e.repeat && !justClosed()) pauseGame(); return; }
   keys[k] = true;
   if (k === "Space") { e.preventDefault(); dash(); }
   if (k === "KeyR") startReload();
@@ -796,7 +796,7 @@ function closeNote(){
   Q = null; G.calmT = Math.max(G.calmT, 5);   // a short breather after the quiz
   if (G.mode === "fortress") { G.waveActive = true; startWave(); if (G.unlocked.length >= 5) spawnMerchant(); }
 }
-$("#noteClose").onclick = () => { if (G.panel === "picker" || G.panel === "shop") closePanel(); else if (!Q) startQuiz(); };
+$("#noteClose").onclick = () => { if (G.panel === "picker" || G.panel === "shop" || G.panel === "towerquiz") closePanel(); else if (!Q) startQuiz(); };
 /* ---------------- 🏰 fortress ---------------- */
 const fort = { pads: [], towers: [], merchant: null, events: [] };
 function signTexture(text, sub){
@@ -1011,10 +1011,13 @@ function nearestInteract(){
 // ---- panels on the paper (#note): tower quiz, tower word picker, shop. The world slows, it doesn't stop. ----
 function openPanel(kind, head){
   G.noteOpen = true; G.panel = kind; G.timeScale = .15; document.exitPointerLock && document.exitPointerLock();
-  $("#note .nHead").textContent = head; $("#noteClose").hidden = kind !== "picker" && kind !== "shop"; $("#noteClose").textContent = "닫기 · Close (Esc)";
+  $("#note .nHead").textContent = head; $("#noteClose").hidden = kind !== "picker" && kind !== "shop" && kind !== "towerquiz"; $("#noteClose").textContent = kind === "towerquiz" ? "나가기 · Exit (Esc / Q)" : "닫기 · Close (Esc)";
   $("#note").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow");
 }
-function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = null; $("#note").hidden = true; $("#vignette").classList.remove("slow"); lock(); }
+function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = null; G.panelClosedAt = performance.now(); $("#note").hidden = true; $("#vignette").classList.remove("slow"); lock();
+  // Esc can't re-capture the mouse (browsers ignore it as a click): show "click to play" instead of leaving you stuck
+  setTimeout(() => { if (document.pointerLockElement !== renderer.domElement && G.running && !G.paused && !G.over && !G.noteOpen && !G.backpackOpen) $("#clickToPlay").hidden = false; }, 200); }
+const justClosed = () => performance.now() - (G.panelClosedAt || 0) < 600;
 function knownQuestion(){
   const known = G.unlocked, w = pick(known), kind = pick(["mean", "kr", "pos"]);
   if (kind === "mean") { const wrong = distinct(G.pool.filter(x => x.pos === w.pos), 3, meaning, [w]); while (wrong.length < 3) wrong.push(...distinct(G.pool, 3 - wrong.length, meaning, [w, ...wrong]));
@@ -1083,7 +1086,7 @@ function nukeWord(){
   objectiveFlash(`☄️ 말살! · Wipe-out: <b>${n}</b> × ${esc(G.loaded.kr)}`);
 }
 function startWave(){
-  G.wave++; G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.calmT = 8; G.lastCalm = -1;
+  G.wave++; G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.calmT = 15; G.lastCalm = -1; G.spawnT = 3;   // 15 s to walk over + build before the first enemy
   G.waveSize = 50 + (G.wave - 1) * 2;   // 50, 52, 54 … ~250 at wave 100
   if (G.wave > 1) { setupZone(G.zone + 1); rollEvents(); }
   const z = world.zones[G.zone];
