@@ -1,0 +1,1681 @@
+// 단어 탄창 · Word Ammo — main game.
+// Loop: aliens walk at you; Lumi (the friendly alien) names the Korean word each one is weak to; you open
+// the backpack (world slows down), find that word in its meaning category, load it, and shoot.
+import * as THREE from "../../node_modules/three/build/three.module.js";
+import { EffectComposer } from "../../node_modules/three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "../../node_modules/three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "../../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "../../node_modules/three/examples/jsm/postprocessing/OutputPass.js";
+import { buildWorld } from "./world.js";
+import { Alien, Orb, glowTexture } from "./enemies.js";
+import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js";
+import { Net } from "./coop.js";
+
+const D = window.WORD_DATA;
+const $ = s => document.querySelector(s);
+const store = { get(k, d){ try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch(e) { return d; } }, set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} } };
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const shirtMode = () => G.mode === "escape" || G.mode === "fortress";
+const CAT = Object.fromEntries(D.categories.map(c => [c.id, c]));
+const POS_KO = { noun: "명사", verb: "동사", adjective: "형용사", adverb: "부사", other: "기타" };
+
+/* ================================ settings / progress ================================ */
+const settings = Object.assign({ lang: store.get("k5a_lang_wa", "en"), labels: "ko", bpMode: "type", subs: "type", sens: 1, vol: .8,
+  ch: ["ch3"], cls: ["v", "r1", "r2", "s1"], star: false }, store.get("wa_settings", {}));
+if (settings.bpMode === "grow") settings.bpMode = "type";   // the upgrade to category tabs was dropped: the word-type list stays
+const stats = store.get("wa_stats", {});          // per word id: {r: right, w: wrong/slow, t: last seen ms}
+const saveSettings = () => store.set("wa_settings", settings);
+const saveStats = () => store.set("wa_stats", stats);
+const meaning = w => w.m[settings.lang] || w.m.en;
+function selectedPool(){
+  const secs = new Set(D.sections.filter(s => settings.ch.includes(s.ch) && settings.cls.includes(s.cls)).map(s => s.id));
+  const seen = new Set();
+  return D.words.filter(w => secs.has(w.sec) && (!settings.star || w.star) && !seen.has(w.kr) && seen.add(w.kr));
+}
+
+/* ================================ renderer / scene ================================ */
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.55;
+$("#game").appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, .05, 900);
+scene.add(camera);
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .8, .5, .72);
+composer.addPass(bloom); composer.addPass(new OutputPass());
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+const world = buildWorld(scene);
+
+/* ================================ player ================================ */
+const player = { body: { x: 0, y: 0, z: 62, vy: 0 }, feet: 0, pos: new THREE.Vector3(0, 1.7, 62), yaw: 0, pitch: 0, vel: new THREE.Vector3(), hp: 100, dashes: 2, dashCd: 0,
+  dashing: 0, dashDir: new THREE.Vector3(), lastHurt: -99, bob: 0, hasGun: false, moved: 0 };
+const keys = {};
+
+/* ---------- gun viewmodel ---------- */
+const gun = new THREE.Group();
+const gunMat = new THREE.MeshStandardMaterial({ color: 0x2b2f3d, roughness: .35, metalness: .8 });
+const gunMat2 = new THREE.MeshStandardMaterial({ color: 0x151722, roughness: .5, metalness: .6 });
+const glowMat = new THREE.MeshBasicMaterial({ color: 0x7cf7d4 });
+const gb = (w, h, d, x, y, z, m) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); gun.add(b); return b; };
+gb(.11, .13, .5, 0, 0, 0, gunMat); gb(.08, .2, .1, 0, -.14, .12, gunMat2); gb(.13, .05, .3, 0, .09, -.02, gunMat2);
+const barrel = new THREE.Mesh(new THREE.CylinderGeometry(.035, .045, .32, 12), gunMat2); barrel.rotation.x = Math.PI / 2; barrel.position.set(0, .01, -.38); gun.add(barrel);
+const chamber = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, .18, 16), glowMat); chamber.rotation.x = Math.PI / 2; chamber.position.set(0, -.02, -.12); gun.add(chamber);
+const muzzle = new THREE.Object3D(); muzzle.position.set(0, .01, -.56); gun.add(muzzle);
+// a little screen on the side of the gun that shows the loaded word
+const screenCanvas = document.createElement("canvas"); screenCanvas.width = 256; screenCanvas.height = 96;
+const screenTex = new THREE.CanvasTexture(screenCanvas); screenTex.colorSpace = THREE.SRGBColorSpace;
+const screen = new THREE.Mesh(new THREE.PlaneGeometry(.28, .105), new THREE.MeshBasicMaterial({ map: screenTex, toneMapped: false }));
+screen.position.set(-.058, .02, -.02); screen.rotation.y = -Math.PI / 2; gun.add(screen);
+const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0x9ffff0, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+flash.scale.set(.5, .5, 1); flash.position.copy(muzzle.position); gun.add(flash);
+gun.position.set(.28, -.27, -.5); gun.scale.setScalar(.8); gun.visible = false; camera.add(gun);
+const gunLight = new THREE.PointLight(0x7cf7d4, 0, 6, 2); gunLight.position.set(.3, -.2, -1); camera.add(gunLight);
+const fillLight = new THREE.PointLight(0xc8d0ff, 1.4, 2.2, 2); fillLight.position.set(.1, .1, -.1); camera.add(fillLight);   // keeps the gun readable
+function drawGunScreen(){
+  const g = screenCanvas.getContext("2d"); g.fillStyle = "#04110d"; g.fillRect(0, 0, 256, 96);
+  g.strokeStyle = "#7cf7d4"; g.lineWidth = 4; g.strokeRect(3, 3, 250, 90);
+  const w = G.loaded; g.fillStyle = "#7cf7d4"; g.textAlign = "center"; g.textBaseline = "middle";
+  let fs = 44; g.font = `bold ${fs}px "Malgun Gothic", sans-serif`;
+  const txt = w ? w.kr : "EMPTY"; while (g.measureText(txt).width > 230 && fs > 18) { fs -= 2; g.font = `bold ${fs}px "Malgun Gothic", sans-serif`; }
+  g.fillText(txt, 128, 50); screenTex.needsUpdate = true;
+}
+// the gun lying on a pedestal at the start (tutorial)
+const pedestal = new THREE.Group();
+{ const st = new THREE.Mesh(new THREE.CylinderGeometry(.5, .6, 1, 16), new THREE.MeshStandardMaterial({ color: 0x3a3646, roughness: .9 })); st.position.y = .5; pedestal.add(st);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(.7, .03, 8, 40), glowMat); ring.rotation.x = Math.PI / 2; ring.position.y = 1.05; pedestal.add(ring);
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(.35, .35, 6, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0x7cf7d4, transparent: true, opacity: .12, side: THREE.DoubleSide, depthWrite: false }));
+  beam.position.y = 3.5; pedestal.add(beam);
+  const pl = new THREE.PointLight(0x7cf7d4, 12, 8, 2); pl.position.y = 2; pedestal.add(pl); }
+const pedGun = gun.clone(); pedGun.visible = true; pedGun.position.set(0, 1.25, 0); pedGun.scale.setScalar(2.2); pedestal.add(pedGun);
+pedestal.position.copy(world.gunSpot); scene.add(pedestal);
+
+/* ================================ game state ================================ */
+const G = {
+  running: false, paused: false, over: false, time: 0, timeScale: 1, slowmo: 1,
+  aliens: [], orbs: [], bursts: [], tracers: [], pickups: [], floaters: [],
+  pool: [], loaded: null, rounds: 6, maxRounds: 6, reloadT: 0, fireCd: 0, recent: [],
+  total: 0, score: 0, kills: 0, perfect: 0, quietT: 0,
+  tut: null, backpackOpen: false, bpTab: 0, bpPos: "all", aimed: null, aimT: 0, shake: 0,
+  helperT: 0, lineCd: {}, runMissed: new Map(), runRight: new Set(), difficulty: 1,
+  world, player,
+  sfx: k => SFX[k] && SFX[k](),
+  groan: a => { if (a.pos.distanceTo(player.pos) < 25) SFX.groan(); },
+  canOrb: a => G.orbs.length < 4 && G.aliens.filter(o => o.state === "charge").length < 2,
+  // an alien that sees you wakes up and alerts the ones standing near it
+  wakeAlien(a){ if (!a.wake()) return; ensureWord(a); G.quietT = 0;
+    for (const o of G.aliens) if (o !== a && o.state === "idle" && !o.dead && o.pos.distanceTo(a.pos) < 11 && Math.abs(o.pos.y - a.pos.y) < 2) { o.wake(); ensureWord(o); } },
+  spawnOrb(from, a){ const target = (G.targetFor ? G.targetFor(a) : player).pos.clone(); target.y -= .4; G.orbs.push(new Orb(scene, from, target)); SFX.orb(); },
+  slam(center, r, a){ SFX.slam(); G.shake = .5; burst(center.clone().setY(.2), 0xff2244, 40, 7); fxOut({ b: [center.x, center.y + .2, center.z, 0xff2244] });
+    for (const T of G.targets()) if (!T.dashing && Math.hypot(T.pos.x - center.x, T.pos.z - center.z) < r && Math.abs(T.feet - center.y) < 1.5) {
+      hurt(24, center, T); if (T === player) { const d = player.pos.clone().sub(center).setY(0).normalize(); player.vel.addScaledVector(d, 9); } } },
+  hurt: (n, from, t) => hurt(n, from, t),
+  burst: (p, c, n, s) => burst(p, c, n, s),
+};
+window.__G = G;   // debugging handle
+
+/* ================================ word picking (spaced repetition light) ================================ */
+function nextWeakWord(){
+  if (shirtMode() && G.unlocked.length) return pick(G.unlocked);   // 2 words = 50/50, 3 = 33% each …
+  if (G.mode === "survival" && G.unlocked.length) {
+    const L = G.unlocked, newest = L[L.length - 1];
+    const wts = L.map(w => { const s = stats[w.id]; return (w === newest && L.length > 1 ? 2.2 : 1) * (s ? Math.max(.4, 1 + s.w * .8 - s.r * .2) : 1); });
+    let r = Math.random() * wts.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < L.length; i++) { r -= wts[i]; if (r <= 0) return L[i]; }
+    return newest;
+  }
+  const taken = new Set(G.aliens.filter(a => !a.dead && a.word).map(a => a.word.id));
+  const now = Date.now();
+  const cands = G.pool.filter(w => !taken.has(w.id) && w.id !== (G.loaded && G.loaded.id));
+  // weight: struggled words come back more, well-known words less, unseen words normal; not the last few again
+  const weights = cands.map(w => {
+    const s = stats[w.id]; let k = 1;
+    if (s) { k = Math.max(.25, 1 + s.w * 1.2 - s.r * .45); if (now - s.t < 60 * 1000) k *= .2; }
+    if (G.recent.includes(w.id)) k *= .05;
+    return k;
+  });
+  let tot = weights.reduce((a, b) => a + b, 0), r = Math.random() * tot;
+  for (let i = 0; i < cands.length; i++) { r -= weights[i]; if (r <= 0) { G.recent.push(cands[i].id); if (G.recent.length > 8) G.recent.shift(); return cands[i]; } }
+  return pick(cands.length ? cands : G.pool);
+}
+function ensureWord(a){ if (!a.word) a.word = nextWeakWord(); return a.word; }
+function markKill(w){ const s = stats[w.id] || (stats[w.id] = { r: 0, w: 0, t: 0 }); s.k = (s.k || 0) + 1; saveStats(); }
+function mark(w, right){ const s = stats[w.id] || (stats[w.id] = { r: 0, w: 0, t: 0 }); if (right) s.r++; else s.w++; s.t = Date.now(); saveStats();
+  if (!right) G.runMissed.set(w.id, (G.runMissed.get(w.id) || 0) + 1); else G.runRight.add(w.id); }
+
+/* ================================ helper (Lumi) ================================ */
+let helperHide = 0;
+function helperShow(html, secs = 4){ $("#helper").hidden = false; $("#helperText").innerHTML = html; helperHide = secs; }
+function helperLine(key, ko, en, cd = 5){
+  if ((G.lineCd[key] || 0) > G.time) return; G.lineCd[key] = G.time + cd;
+  say([lineClip(key)]); G.lineUntil = G.time + 2.2; helperShow(`${esc(ko)} <small>${esc(en)}</small>`, 2.5);
+}
+function announce(a, repeat){
+  ensureWord(a);
+  const first = !a.announced;
+  a.announced = true; a.lastAnnounce = G.time; if (!a.heardAt) a.heardAt = G.time;
+  say([wordClip(a.word.id)], { interrupt: true });   // only the word: nothing may cover it
+  G.speaking = a;
+  updateHelperHint(a, true);
+}
+// Lumi TYPES the word while she says it, the way Korean is typed: ㅈ → 저 → 전 → 전ㅁ → 전무 → 전문.
+// (settings.subs "audio" = voice only, for ear training.)
+const L_JAMO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+function typingSteps(word){
+  const steps = []; let done = "";
+  for (const ch of word) {
+    const c = ch.charCodeAt(0) - 0xAC00;
+    if (c >= 0 && c < 11172) {
+      const L = Math.floor(c / 588), V = Math.floor((c % 588) / 28), T = c % 28;
+      steps.push(done + L_JAMO[L]);                                        // initial consonant
+      steps.push(done + String.fromCharCode(0xAC00 + L * 588 + V * 28));    // + vowel
+      if (T) steps.push(done + ch);                                        // + final consonant
+    } else if (ch !== " ") steps.push(done + ch);
+    done += ch;
+  }
+  steps.push(word);
+  return steps;
+}
+function updateHelperHint(a, force){
+  if (!a || a.dead) return;
+  if (force) G.typing = { a, steps: settings.subs === "audio" ? null : typingSteps(a.word.kr), i: 0, t: 0 };
+  if (!force && $("#helperText").dataset.for !== String(a.id)) return;
+  const dot = `<span style="color:#${new THREE.Color().setHSL(a.hue, .9, .6).getHexString()}">●</span>`;
+  const T = G.typing && G.typing.a === a && G.typing.steps ? G.typing : null;
+  const typing = T && T.i < T.steps.length - 1;
+  const text = T ? T.steps[Math.min(T.i, T.steps.length - 1)] : "🔊";
+  helperShow(`${dot} <b class="typed">${esc(text)}</b>${typing ? '<i class="caret">▍</i>' : ""} <small>🔊 Q</small>`, 8);
+  $("#helperText").dataset.for = String(a.id);
+}
+
+/* ================================ shooting ================================ */
+const ray = new THREE.Raycaster(); ray.far = 120;
+function aimAlien(withDogs = false){
+  camera.updateMatrixWorld();
+  ray.setFromCamera({ x: 0, y: 0 }, camera);
+  const meshes = []; if (withDogs) (G.dogs || []).forEach(h => { if (h.sleepT <= 0) meshes.push(...h.hitMeshes); }); G.aliens.forEach(a => { if (!a.dead && a.spawnT >= 1 && a.root.visible) meshes.push(...a.hitMeshes); });
+  const hit = ray.intersectObjects(meshes, false)[0];
+  if (!hit) return null;
+  if (world.rayBlock(ray.ray.origin, ray.ray.direction, hit.distance) !== Infinity) return null;   // a wall is in the way
+  if (hit.object.userData.dog) return { dog: hit.object.userData.dog, point: hit.point };
+  ensureWord(hit.object.userData.alien);
+  return { alien: hit.object.userData.alien, point: hit.point, head: !!hit.object.userData.head };
+}
+function fire(){
+  if (!player.hasGun || G.backpackOpen || G.noteOpen || player.downed || G.reloadT > 0 || G.fireCd > 0) return;
+  if (!G.loaded) { SFX.empty(); objectiveFlash("🎒 Tab — 탄창이 비었어요 · load a word first"); return; }
+  if (G.rounds <= 0) { startReload(); return; }
+  G.rounds--; G.fireCd = .2; renderAmmo();
+  gun.userData.kick = 1; flash.material.opacity = 1; gunLight.intensity = 6;
+  const from = new THREE.Vector3(); muzzle.getWorldPosition(from);
+  const h = aimAlien(true);
+  let to;
+  if (h && h.dog) { SFX.shot(); if (isClient()) { coopAct({ a: "hound", i: G.dogs.indexOf(h.dog) }); floater(h.point, "🐕", "#ffd23f", 22); } else hitHound(h.dog, h.point); tracer(from, h.point, 0xffd23f); hitmarker(false); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return; }
+  if (h) {
+    to = h.point;
+    const a = h.alien, good = a.special || G.loaded.id === a.word.id;
+    if (isClient()) {   // co-op client: show the hit now, let the host apply it
+      coopAct({ a: "shot", id: a.id, head: h.head ? 1 : 0, w: G.loaded.id });
+      if (good) { SFX.shotGood(); burst(h.point, 0x7cf7d4, 26, 6); hitmarker(true); floater(h.point, h.head ? "💥" : "✓", "#7cf7d4", 26); }
+      else { SFX.shot(); SFX.resist(); burst(h.point, 0x9a93c2, 10, 3); hitmarker(false); floater(h.point, a.word.kr, "#ffcf5c", 30, 1.8, "w" + a.id); }
+      tracer(from, to, good ? 0x7cf7d4 : 0xb8b0ff, true); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return;
+    }
+    G.wakeAlien(a);
+    if (a.firstShotWrong === null) a.firstShotWrong = !good;
+    if (good) {
+      SFX.shotGood(); const dmg = h.head ? 55 : 36; a.stagger = a.special ? .08 : .3;
+      const killed = a.damage(dmg);
+      burst(h.point, 0x7cf7d4, 26, 6); hitmarker(true); floater(h.point, h.head ? `💥 ${dmg}` : `${dmg}`, "#7cf7d4", 26);
+      if (killed) onKill(a);
+      if (G.up && G.up.pierce && !a.special) {
+        const hits = ray.intersectObjects(G.aliens.filter(o => o !== a && !o.dead && o.root.visible && o.word && o.word.id === a.word.id).flatMap(o => o.hitMeshes), false);
+        const done = new Set();
+        for (const ht of hits) { const o = ht.object.userData.alien; if (done.has(o) || done.size >= 2) continue;
+          if (world.rayBlock(ray.ray.origin, ray.ray.direction, ht.distance) !== Infinity) break;
+          done.add(o); burst(ht.point, 0x7cf7d4, 16, 5); if (o.damage(36)) onKill(o); }
+      }
+    } else {
+      SFX.shot(); SFX.resist(); a.damage(2); a.wrongHits++;
+      burst(h.point, 0x9a93c2, 10, 3); hitmarker(false); floater(h.point, a.word.kr, "#ffcf5c", 30, 1.8, "w" + a.id);   // wrong ammo shows the word it IS weak to
+      if (!a.announced && !(G.tut && G.tut.step === "shoot") && !shirtMode()) announce(a);
+      if (G.tut && G.tut.step === "shoot") tutNext("listen");
+    }
+  } else {
+    SFX.shot();
+    ray.setFromCamera({ x: 0, y: 0 }, camera); const bd = world.rayBlock(ray.ray.origin, ray.ray.direction, 60);
+    to = ray.ray.origin.clone().addScaledVector(ray.ray.direction, bd === Infinity ? 60 : bd);
+    if (bd !== Infinity) burst(to, 0xb8b0ff, 8, 2);
+  }
+  tracer(from, to, h && (h.alien.special || G.loaded.id === h.alien.word.id) ? 0x7cf7d4 : 0xb8b0ff);
+  if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250);
+}
+const reloadTime = () => .9 * Math.pow(.65, (G.up && G.up.reload) || 0);
+function startReload(){ if (!G.loaded || G.reloadT > 0) return; G.reloadT = reloadTime(); SFX.reload(); $("#loaded").classList.remove("reload"); void $("#loaded").offsetWidth; $("#loaded").classList.add("reload"); }
+function loadWord(w){
+  if (G.newIds) G.newIds.delete(w.id);
+  const was = G.loaded; G.loaded = w; G.rounds = G.maxRounds; G.reloadT = .5 * reloadTime() / .9; SFX.reload();
+  G.recentLoads = [w.id, ...(G.recentLoads || []).filter(id => id !== w.id)].slice(0, 4);
+  $("#loaded").classList.remove("reload"); void $("#loaded").offsetWidth; $("#loaded").classList.add("reload");
+  glowMat.color.setHSL(.45 + Math.random() * .1, .9, .65);
+  drawGunScreen(); renderAmmo(); renderQuick();
+  if (G.tut && G.tut.step === "backpack") {
+    const a = G.aliens.find(x => !x.dead);
+    if (a && a.word.id === w.id) tutNext("kill"); else if (a) objectiveFlash("그거 아니야 · Not that word — open the backpack again (<b>Tab</b>)");
+  }
+}
+function onKill(a, byTower = false){
+  if (isHost()) fxOut({ k: [a.id, a.word ? a.word.id : "", byTower === "partner" ? 1 : 0] });
+  SFX.kill(); G.kills++; G.shake = .25;
+  const quick = G.time - (a.heardAt || G.time) < 8, perfect = a.firstShotWrong === false || (a.firstShotWrong === true && false);
+  const pts = 100 + (quick ? 50 : 0) + (a.wrongHits === 0 ? 50 : 0);
+  G.score += pts;
+  if (!byTower) { mark(a.word, a.wrongHits === 0 && quick); markKill(a.word); }
+  burst(a.aimPoint(), 0x7cf7d4, 90, 10); burst(a.aimPoint(), 0xffcf5c, 40, 8);
+  if (!a.special) wordGhost(a);
+  const st = bpStage();
+  if (!a.special) killfeed(`<b>${esc(a.word.kr)}</b> = ${esc(meaning(a.word))} <small style="color:#9a93c2">· ${POS_KO[a.word.pos]}${" · " + CAT[a.word.cat].icon + " " + esc(CAT[a.word.cat].ko)}</small>`);
+  floater(a.aimPoint().add(new THREE.Vector3(0, .8, 0)), `+${pts}`, "#ffcf5c", 30);
+  if (a.wrongHits === 0 && quick) G.perfect++;
+  bpUnlockCheck();
+  // health drops: rare in the horde modes (they'd clutter the map), a bit more when you're low
+  const dropP = (shirtMode() ? .06 : G.mode === "survival" ? .12 : .25) + (player.hp < 35 ? .1 : 0);
+  if (Math.random() < dropP) spawnPickup(a.pos.clone());
+  if (G.speaking === a) { $("#helperText").dataset.for = ""; helperHide = 1.2; }
+  if (G.tut) { if (G.tut.step === "kill") tutNext("dodge"); else if (G.tut.step === "dodge" || G.tut.step === "dodge2") tutNext("done"); }
+  else if (G.mode === "escape") { if (a.special) specialKill(a); renderTop(); }
+  else if (G.mode === "fortress") { if (a.special) bossKill(a); else { G.waveKills++; G.coins++; } renderTop(); }
+  else if (G.mode === "survival") { if (G.kills >= G.nextUnlockAt) { G.nextUnlockAt += 5; unlockWord(); } renderTop(); }
+  else { renderTop(); if (!G.aliens.some(x => !x.dead)) setTimeout(victory, 1600); }
+}
+
+/* ================================ FX ================================ */
+function burst(pos, color, n = 30, speed = 5){
+  const geo = new THREE.BufferGeometry(), p = new Float32Array(n * 3), v = [];
+  for (let i = 0; i < n; i++) { p[i * 3] = pos.x; p[i * 3 + 1] = pos.y; p[i * 3 + 2] = pos.z;
+    const d = new THREE.Vector3(rnd(-1, 1), rnd(-.3, 1.2), rnd(-1, 1)).normalize().multiplyScalar(rnd(.3, 1) * speed); v.push(d); }
+  geo.setAttribute("position", new THREE.BufferAttribute(p, 3));
+  const m = new THREE.Points(geo, new THREE.PointsMaterial({ color, size: .12, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending, map: glowTexture() }));
+  scene.add(m); G.bursts.push({ m, v, life: .9, max: .9 });
+}
+function tracer(from, to, color, noNet){
+  if (!noNet) fxOut({ tr: [from.x, from.y, from.z, to.x, to.y, to.z, color] });
+  const len = from.distanceTo(to);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(.025, .025, len), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false }));
+  m.position.copy(from).lerp(to, .5); m.lookAt(to); scene.add(m); G.tracers.push({ m, life: .09 });
+}
+function wordGhost(a){   // the word floats up out of the dead alien — a last look at it
+  const c = document.createElement("canvas"); c.width = 512; c.height = 160; const g = c.getContext("2d");
+  g.font = `bold 84px "Malgun Gothic", sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+  g.shadowColor = "#7cf7d4"; g.shadowBlur = 24; g.fillStyle = "#e9fffa"; g.fillText(a.word.kr, 256, 70);
+  g.shadowBlur = 0; g.font = `30px "Segoe UI", "Malgun Gothic", sans-serif`; g.fillStyle = "#ffcf5c"; g.fillText(meaning(a.word).slice(0, 34), 256, 136);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false, toneMapped: false }));
+  s.position.copy(a.aimPoint()).add(new THREE.Vector3(0, .9, 0)); s.scale.set(3.2, 1, 1); scene.add(s);
+  G.bursts.push({ sprite: s, life: 2.4, max: 2.4 });
+}
+function spawnPickup(pos){
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0x6dff8a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  s.scale.set(.9, .9, 1); s.position.set(pos.x, world.groundY(pos.x, pos.z) + .7, pos.z); s.userData.base = s.position.y; scene.add(s);
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(.18), new THREE.MeshBasicMaterial({ color: 0xb8ffc6 })); s.add(core);
+  G.pickups.push({ s, t: 0 });
+  while (G.pickups.length > 6) { const old = G.pickups.shift(); scene.remove(old.s); }   // never more than 6 on the map
+}
+function hurt(n, from, target = player){
+  if (G.over) return;
+  if (target === partner) {   // host: the co-op partner got hit
+    if (partner.dashing || partner.downed) return;
+    partner.hp = Math.max(0, partner.hp - n); partner.lastHurt = G.time; fxOut({ hurt: n });
+    if (partner.hp <= 0) { partner.downed = true; partner.bleedT = 30; objectiveFlash("🆘 파트너가 쓰러졌어요! · Your partner is down — go to them and <b>hold E</b> (30 s)"); }
+    return;
+  }
+  if (player.dashing || player.downed) return;
+  player.hp = Math.max(0, player.hp - n); player.lastHurt = G.time; hurtFx();
+  renderHP();
+  if (player.hp <= 0) { if (G.coop && G.mode === "fortress") goDown(); else gameOver(); }
+}
+function hurtFx(){ SFX.hurt(); G.shake = .35; const v = $("#vignette"); v.classList.remove("hurt"); void v.offsetWidth; v.classList.add("hurt"); setTimeout(() => v.classList.remove("hurt"), 250); }
+const vec = new THREE.Vector3();
+function floater(pos, text, color, size, life = .9, key = null){
+  if (key) for (const f of G.floaters) if (f.key === key) { f.life = 0; f.el.remove(); }   // one label per key (no stacking)
+  const el = document.createElement("div"); el.className = "fl"; el.textContent = text; el.style.color = color; el.style.fontSize = size + "px";
+  $("#floaters").appendChild(el); G.floaters.push({ el, pos: pos.clone(), life, max: life, key });
+}
+function hitmarker(good){ const h = $("#hitmarker"); h.className = good ? "good" : ""; void h.offsetWidth; h.classList.add("show"); }
+function killfeed(html, bad){ const d = document.createElement("div"); d.className = "kf" + (bad ? " bad" : ""); d.innerHTML = html; $("#killfeed").prepend(d); setTimeout(() => d.remove(), 5000); }
+let objTimer = 0;
+function objective(html){ $("#objective").innerHTML = html; }
+function objectiveFlash(html){ const prev = $("#objective").innerHTML; objective(html); clearTimeout(objTimer); objTimer = setTimeout(() => { if ($("#objective").innerHTML === html) objective(G.tut ? G.tut.text : prev); }, 2000); }
+
+/* ================================ HUD ================================ */
+function renderHP(){ $("#hpFill").style.width = player.hp + "%"; }
+function renderAmmo(){
+  const w = G.loaded;
+  $("#loadedWord").textContent = w ? (settings.labels === "ko" ? w.kr : meaning(w)) : "—";
+  $("#loadedSub").textContent = w ? `${CAT[w.cat].icon} ${CAT[w.cat].ko}` : "";
+  $("#rounds").innerHTML = Array.from({ length: G.maxRounds }, (_, i) => `<i class="${i < G.rounds ? "" : "off"}"></i>`).join("");
+}
+function renderQuick(){
+  const ids = (shirtMode() ? G.unlocked.slice(0, 9).map(w => w.id) : G.recentLoads) || [];
+  $("#quick").innerHTML = ids.map((id, i) => { const w = D.words.find(x => x.id === id); return `<div class="q${G.loaded && G.loaded.id === id ? " on" : ""}"><div class="k">${i + 1}</div><div class="w">${esc(settings.labels === "ko" ? w.kr : meaning(w))}</div></div>`; }).join("");
+}
+function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
+function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
+  if (G.mode === "fortress") { const z = world.zones[G.zone];
+    $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
+  if (G.mode === "escape") { const cp = world.route[Math.min(G.cp, world.route.length - 1)];
+    $("#waveLbl").textContent = `🏃 ${Math.min(G.cp + 1, world.route.length)}/${world.route.length} ${cp.ko} · 🎒 ${G.unlocked.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
+  if (G.mode === "survival" && !G.tut) { const t = Math.floor(G.survT || 0);
+    $("#waveLbl").textContent = `⏱ ${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")} · 🎒 ${G.unlocked.length} words · next in ${Math.max(0, G.nextUnlockAt - G.kills)} kills`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
+  $("#waveLbl").textContent = G.tut ? "TUTORIAL" : `👽 남은 외계인 ${left} / ${G.total}`; $("#scoreLbl").textContent = `★ ${G.score}`; }
+
+/* ================================ backpack ================================ */
+function openBackpack(){
+  if (!player.hasGun || G.over) return;
+  G.backpackOpen = true; G.timeScale = .15; SFX.open();
+  $("#backpack").hidden = false; $("#vignette").classList.add("slow"); $("#clickToPlay").hidden = true; $("#bpGrid").scrollTop = 0;
+  // start on the tab of the current loaded word, or keep the last tab
+  renderBackpack();
+  document.exitPointerLock && document.exitPointerLock();
+  if (G.tut && G.tut.step === "backpack") $("#bpFoot").innerHTML = `💡 Lumi said a word 🔊 — find it in the list (ㄱㄴㄷ order) and click it. The glowing word is a tutorial hint. Later your backpack gets tabs.`;
+}
+function closeBackpack(relock = true){
+  if (!G.backpackOpen) return;
+  G.backpackOpen = false; G.timeScale = 1; SFX.close();
+  $("#backpack").hidden = true; $("#vignette").classList.remove("slow");
+  if (relock && G.running && !G.paused && !G.over) lock();
+}
+// The backpack GROWS during a run so you learn the words before you need to know how they're sorted:
+//   stage 1 = ONE list grouped under 명사/동사/형용사/부사/기타 headers (jump bar on top),
+//   stage 2 = tabs by meaning category (after 15 kills), still grouped by word type inside a tab.
+// Only ever one sorting system at a time. settings.bpMode "type"/"cat" skips ahead for players who know the words.
+const STAGE_AT = { 2: 15 };
+const INITIALS = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+function initial(kr){ if (/^[-~(]/.test(kr)) return "문법"; const c = kr.charCodeAt(0) - 0xAC00; return c >= 0 && c < 11172 ? INITIALS[Math.floor(c / 588)] : kr[0]; }
+const bpSort = (a, b) => (initial(a.kr) === "문법") - (initial(b.kr) === "문법") || a.kr.localeCompare(b.kr, "ko");
+function bpStage(){ return settings.bpMode === "cat" ? 2 : 1; }   // 1 = one list grouped by word type (default, stays)
+const POS_ORDER = { noun: 0, verb: 1, adjective: 2, adverb: 3, other: 4 };
+const group = w => POS_KO[w.pos] || POS_KO.other;
+const typeSort = (a, b) => (POS_ORDER[a.pos] ?? 4) - (POS_ORDER[b.pos] ?? 4) || bpSort(a, b);
+const POS_TABS = ["noun", "verb", "adjective", "adverb", "other"];
+const bpPool = () => G.mode === "survival" || shirtMode() ? G.unlocked : G.pool;
+function bpTabsList(){
+  const st = bpStage();
+  if (st === 1) return [];
+  return D.categories.filter(c => bpPool().some(w => w.cat === c.id)).map(c => ({ label: c.ko, icon: c.icon + " ", test: w => w.cat === c.id }));
+}
+function renderBackpack(){
+  const st = bpStage(), tabs = bpTabsList(); if (G.bpTab >= tabs.length) G.bpTab = 0;
+  const tutWord = G.tut && G.tut.step === "backpack" ? (G.aliens.find(a => !a.dead) || {}).word : null;
+  $("#bpCount").textContent = `${bpPool().length} words · ${st === 1 ? "품사별 · by word type" : tabs.length + " categories"}`;
+  $("#bpPos").innerHTML = "";
+  if (!tabs.length) {
+    const inis = [...new Set(bpPool().slice().sort(typeSort).map(group))];
+    $("#bpTabs").innerHTML = inis.map(x => `<button class="jump" data-jump="${esc(x)}">${esc(x)}</button>`).join("");
+  } else $("#bpTabs").innerHTML = tabs.map((t, i) => {
+    const n = bpPool().filter(t.test).length;
+    return `<button data-tab="${i}" class="${i === G.bpTab ? "on" : ""}${tutWord && t.test(tutWord) ? " hintTab" : ""}">${t.icon}${esc(t.label)} <span class="n">${n}</span>${i < 10 ? `<span class="hk">${(i + 1) % 10}</span>` : ""}</button>`;
+  }).join("");
+  const list = (tabs.length ? bpPool().filter(tabs[G.bpTab].test) : bpPool()).slice().sort(typeSort);
+  let lastIni = "", html = "";
+  for (const w of list) {
+    const ini = group(w);
+    if (ini !== lastIni) { html += `<div class="ini" data-ini="${esc(ini)}">${esc(ini)}</div>`; lastIni = ini; }   // 명사 / 동사 / … headers
+    const main = settings.labels === "ko" ? w.kr : meaning(w);
+    html += `<button data-w="${w.id}" class="${G.loaded && G.loaded.id === w.id ? "cur" : ""}${tutWord && tutWord.id === w.id ? " hintWord" : ""}"><span class="w">${esc(main)}</span>${G.newIds && G.newIds.has(w.id) ? '<span class="new">NEW</span>' : ""}${stats[w.id] && stats[w.id].k ? `<span class="m">${esc(settings.labels === "ko" ? meaning(w) : w.kr)}</span>` : ""}</button>`;   // defeated words show their translation
+  }
+  $("#bpGrid").innerHTML = html || `<div style="color:#9a93c2">—</div>`;
+}
+function bpUnlockCheck(){
+  return;   // no more upgrade
+  if (G.kills === STAGE_AT[2]) { SFX.pickup(); G.bpTab = 0; objectiveFlash("🎒 가방 업그레이드! 이제 <b>의미</b>별로 정리돼요 · Backpack upgrade: sorted by <b>meaning category</b>"); }
+}
+$("#bpTabs").onclick = e => {
+  const j = e.target.closest("[data-jump]");
+  if (j) { const h = [...document.querySelectorAll("#bpGrid .ini")].find(x => x.dataset.ini === j.dataset.jump); if (h) h.scrollIntoView({ block: "start" }); SFX.select(); return; }
+  const b = e.target.closest("[data-tab]"); if (!b) return; G.bpTab = +b.dataset.tab; SFX.select(); renderBackpack(); $("#bpGrid").scrollTop = 0; };
+$("#bpGrid").onclick = e => { const b = e.target.closest("[data-w]"); if (!b) return; const w = D.words.find(x => x.id === b.dataset.w); closeBackpack(true); loadWord(w); };
+$("#bpClose").onclick = () => closeBackpack(true);
+
+/* ================================ input ================================ */
+function lock(){ const c = renderer.domElement; if (document.pointerLockElement !== c && c.requestPointerLock) { const p = c.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } }
+document.addEventListener("pointerlockchange", () => {
+  const locked = document.pointerLockElement === renderer.domElement;
+  // Esc while the mouse is captured releases it without a keydown: treat losing the lock as pause
+  if (!locked && G.running && !G.paused && !G.over && !G.backpackOpen && !G.noteOpen && G.wasLocked) pauseGame();
+  G.wasLocked = locked;
+  $("#clickToPlay").hidden = locked || !G.running || G.paused || G.over || G.backpackOpen;
+});
+$("#clickToPlay").onclick = () => { initAudio(); lock(); };
+renderer.domElement.addEventListener("mousedown", e => {
+  if (!G.running || G.paused || G.over) return;
+  if (document.pointerLockElement !== renderer.domElement) { lock(); return; }
+  if (e.button === 0) { G.firing = true; fire(); }
+});
+addEventListener("mouseup", e => { if (e.button === 0) G.firing = false; });
+addEventListener("mousemove", e => {
+  if (document.pointerLockElement !== renderer.domElement || G.backpackOpen) return;
+  const s = .0022 * settings.sens;
+  player.yaw -= e.movementX * s; player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * s));
+});
+addEventListener("keydown", e => {
+  if (!G.running || G.over) return;
+  const k = e.code;
+  if (G.noteOpen) { e.preventDefault();
+    if (G.panel === "picker") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n && G.unlocked[+n[1] - 1]) { pickWordFor(G.pickerTower, G.unlocked[+n[1] - 1]); closePanel(); } if (k === "Escape" || k === "KeyE") closePanel(); return; }
+    if (G.panel === "shop") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n) buy(+n[1] - 1); if (k === "Escape" || k === "KeyE") closePanel(); return; }
+    if (G.panel === "towerquiz" && k === "Escape") { closePanel(); return; }
+    if (!Q) { if (k === "KeyE" || k === "Space" || k === "Enter") startQuiz(); return; }
+    const n = /^(?:Digit|Numpad)([1-5])$/.exec(k); if (n) answerQuiz(+n[1] - 1); return; }
+  if (k === "Tab" || k === "KeyB") { e.preventDefault(); if (G.backpackOpen) closeBackpack(true); else if (!G.paused) openBackpack(); return; }
+  if (G.backpackOpen) {
+    const cats = bpTabsList();
+    if (!cats.length && k !== "Escape") return;
+    if (k === "Escape") { closeBackpack(true); return; }
+    if (k === "ArrowRight") { G.bpTab = (G.bpTab + 1) % cats.length; renderBackpack(); SFX.select(); }
+    if (k === "ArrowLeft") { G.bpTab = (G.bpTab - 1 + cats.length) % cats.length; renderBackpack(); SFX.select(); }
+    const d = /^Digit(\d)$/.exec(k); if (d) { const i = (+d[1] + 9) % 10; if (i < cats.length) { G.bpTab = i; renderBackpack(); SFX.select(); } }
+    return;
+  }
+  if (k === "Escape") { if (!G.paused) pauseGame(); return; }
+  keys[k] = true;
+  if (k === "Space") { e.preventDefault(); dash(); }
+  if (k === "KeyR") startReload();
+  if (k === "KeyE" && G.mode === "fortress" && G.interact && G.interact.kind !== "revive" && !player.downed) { const it = G.interact; if (it.kind === "pad") towerQuiz(it.o); else if (it.kind === "tower") towerPicker(it.o); else if (it.kind === "event") useEvent(it.o); else openShop(); return; }
+  if (k === "KeyF") nukeWord();
+  if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a) announce(a, true); }
+  if (shirtMode()) { const n = /^Digit([1-9])$/.exec(k); if (n) { const w = G.unlocked[+n[1] - 1]; if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); } if (n) return; }
+  const d = /^Digit([1-4])$/.exec(k);
+  if (d && G.recentLoads && G.recentLoads[+d[1] - 1]) { const w = D.words.find(x => x.id === G.recentLoads[+d[1] - 1]); if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); }
+});
+addEventListener("keyup", e => { keys[e.code] = false; });
+// mouse wheel cycles through the words you know (escape / survival)
+addEventListener("wheel", e => { if (!G.running || G.backpackOpen || G.noteOpen || !G.unlocked || G.unlocked.length < 2 || (!shirtMode() && G.mode !== "survival")) return;
+  const i = Math.max(0, G.unlocked.findIndex(w => G.loaded && w.id === G.loaded.id)), n = G.unlocked.length;
+  loadWord(G.unlocked[(i + (e.deltaY > 0 ? 1 : -1) + n) % n]); }, { passive: true });
+function nearestAlien(){ let best = null, bd = 1e9; for (const a of G.aliens) if (!a.dead) { const d = a.pos.distanceTo(player.pos) - (a.active ? 1000 : 0); if (d < bd) { bd = d; best = a; } } return best; }
+function dash(){
+  if (player.dashCd > 0 || player.dashing > 0 || !G.running) return;
+  player.dashCd = .55; player.dashing = .2; SFX.dash();   // unlimited: only a short cooldown
+  const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw)), r = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  const d = new THREE.Vector3();
+  if (keys.KeyW) d.add(f); if (keys.KeyS) d.sub(f); if (keys.KeyD) d.add(r); if (keys.KeyA) d.sub(r);
+  if (d.lengthSq() < .01) d.copy(f);
+  player.dashDir.copy(d.normalize());
+  if (G.tut && G.tut.step === "dodge") G.tut.dashed = true;
+}
+
+/* ================================ tutorial ================================ */
+const TUT = {
+  move:    { text: "<b>WASD</b>로 걸어 보세요 · Walk with <b>WASD</b>, look with the <b>mouse</b>" },
+  gun:     { text: "빛나는 총을 주우세요 · Walk to the glowing <b>gun</b> to pick it up" },
+  shoot:   { text: "외계인이 온다! 쏘세요 · An alien! <b>Shoot it</b> (left mouse)" },
+  listen:  { text: "안 먹혀요! 루미의 말을 들어 보세요 · It <b>resists</b> your ammo. Listen to Lumi 🔊 (Q = hear again)" },
+  backpack:{ text: "<b>Tab</b> — 가방을 열어서 그 단어를 장전하세요 · Open your <b>backpack</b> and load that word" },
+  kill:    { text: "이제 쏘세요! · Now <b>shoot</b> it!" },
+  dodge:   { text: "가까이 오면 내려쳐요 — 빨간 원에서 <b>Space</b>로 피하세요 · Up close they <b>slam</b>: dash (<b>Space</b>) out of the red circle. Look at it to hear its word" },
+  dodge2:  { text: "그 단어를 찾아서 처치하세요 · Find its word and take it down" },
+  done:    { text: "훈련 끝! 이제 구역을 정화하세요 · Training done — now clear the district" },
+};
+function tutNext(step){
+  if (!G.tut) return;
+  G.tut.step = step; G.tut.text = TUT[step].text; objective(TUT[step].text);
+  if (step === "gun") helperShow("안녕! 나는 루미야. <small>Hi, I'm Lumi — I'll tell you which word each alien is weak to.</small>", 5);
+  if (step === "shoot") { spawnAlien(world.tutorialSpawns[0].clone(), { rise: true, speed: .55, skills: { orb: false, slam: false } }); say([lineClip("careful")]); }
+  if (step === "listen") { setTimeout(() => { const a = G.aliens.find(x => !x.dead); if (a) { announce(a); setTimeout(() => G.tut && G.tut.step === "listen" && tutNext("backpack"), 1800); } }, 500); }
+  if (step === "backpack") say([lineClip("backpack")]);
+  if (step === "dodge") { G.tut.dashed = false; spawnAlien(new THREE.Vector3(player.pos.x, 0, player.pos.z - 14), { rise: true, speed: .8, skills: { orb: false, slam: true } }); setTimeout(() => G.tut && G.tut.step === "dodge" && tutNext("dodge2"), 9000); }
+  if (step === "done") { store.set("wa_tutorial_done", true); setTimeout(() => { G.tut = null; populateDistrict(); }, 3000); }
+}
+
+/* ================================ the district ================================ */
+function spawnAlien(pos, opt = {}){
+  const f = world.freeSpot(pos.x, pos.z); pos.x = f.x; pos.z = f.z;   // never inside a table or crate
+  pos.y = world.groundY(pos.x, pos.z);
+  const a = new Alien(scene, pos, opt.dormant ? null : nextWeakWord(), opt); a.id = Math.random().toString(36).slice(2);
+  G.aliens.push(a); return a;
+}
+// aliens wait in houses, squares, the cathedral and on the wall (world.nests); one caster where flagged
+function populateDistrict(){
+  for (const [x, z, n, flags] of world.nests) {
+    for (let i = 0; i < n; i++) {
+      const caster = flags.includes("c") && i === n - 1;
+      const ang = i / n * Math.PI * 2, r = n > 1 ? 1.6 : 0;
+      spawnAlien(new THREE.Vector3(x + Math.cos(ang) * r, 0, z + Math.sin(ang) * r), {
+        dormant: true, roam: flags.includes("r"), caster, speed: caster ? .9 : rnd(.85, 1.15),
+        skills: caster ? { orb: true, slam: false } : { orb: false, slam: true } });
+    }
+  }
+  G.total = G.aliens.filter(a => !a.dead).length;
+  objective(`구역을 정화하세요 · Clear the district — <b>${G.total}</b> aliens are hiding in houses, squares and the cathedral`);
+  setTimeout(() => { if (!G.tut && G.running) objective(""); }, 7000);
+  renderTop();
+}
+// Lumi's radar: when nothing is happening for a while, an arrow points at the nearest alien
+function districtTick(rdt){
+  if (G.tut || G.mode === "survival" || shirtMode()) { if (!shirtMode()) $("#radar").hidden = true; return; }
+  const active = G.aliens.some(a => a.active);
+  G.quietT = active ? 0 : G.quietT + rdt;
+  const near = nearestAlien();
+  const show = near && G.quietT > 2 && !G.backpackOpen;
+  $("#radar").hidden = !show;
+  if (show) {
+    const dx = near.pos.x - player.pos.x, dz = near.pos.z - player.pos.z;
+    const ang = Math.atan2(dx, -dz) + player.yaw;   // 0 = straight ahead
+    $("#radarArrow").style.transform = `rotate(${ang - Math.PI / 2}rad)`;   // the ➤ glyph points right
+    const up = near.pos.y - player.feet > 1.5 ? " ↑" : near.pos.y - player.feet < -1.5 ? " ↓" : "";
+    $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m" + up;
+  }
+}
+// minimap: static layer drawn once, dynamic dots every few frames
+const MM = { S: 170, W: 136 };
+let mmStatic = null, mmT = 0;
+function mmXY(x, z){ return [(x + 68) / MM.W * MM.S, (z + 68) / MM.W * MM.S]; }
+function drawMinimapStatic(){
+  const c = document.createElement("canvas"); c.width = c.height = MM.S; const g2 = c.getContext("2d");
+  g2.fillStyle = "#15131f"; g2.fillRect(0, 0, MM.S, MM.S);
+  const rect = (x0, x1, z0, z1, col) => { const [a, b] = mmXY(x0, z0), [c2, d] = mmXY(x1, z1); g2.fillStyle = col; g2.fillRect(a, b, c2 - a, d - b); };
+  rect(-68, 68, -68, -14, "#231f33");       // upper town
+  rect(-68, -61, -14, 44, "#2c2640");       // wall walk
+  rect(-7, 7, -14, -4, "#3a3352"); rect(46, 54, -14, 4, "#3a3352"); rect(-68, -61, -32, -14, "#3a3352");   // stairs & ramps
+  for (const b of world.mm.solid) rect(b[0], b[1], b[2], b[3], "#4a4560");
+  for (const b of world.mm.enter) { rect(b[0], b[1], b[2], b[3], "#2d4a47"); }
+  g2.fillStyle = "#7cf7d4"; for (const [x, z] of world.mm.doors) { const [a, b] = mmXY(x, z); g2.fillRect(a - 2, b - 2, 4, 4); }
+  mmStatic = c;
+}
+function drawMinimap(){
+  const cv = $("#minimap"), g2 = cv.getContext("2d");
+  if (!mmStatic) drawMinimapStatic();
+  g2.drawImage(mmStatic, 0, 0);
+  for (const a of G.aliens) { if (a.dead) continue; const d = a.pos.distanceTo(player.pos);
+    if (!a.active && d > 30) continue;   // sleeping aliens only show up when you're close
+    const [x, y] = mmXY(a.pos.x, a.pos.z); g2.fillStyle = a.active ? "#ff4d6d" : "rgba(255,77,109,.45)"; g2.beginPath(); g2.arc(x, y, a.active ? 3 : 2.2, 0, 7); g2.fill(); }
+  if (G.mode === "fortress") { for (const p of fort.pads) { const [x, y] = mmXY(p.x, p.z); g2.strokeStyle = "#7cf7d4"; g2.strokeRect(x - 3, y - 3, 6, 6); }
+    for (const t of fort.towers) { const [x, y] = mmXY(t.x, t.z); g2.fillStyle = "#7cf7d4"; g2.fillRect(x - 3, y - 3, 6, 6); }
+    for (const ev of fort.events) { const [x, y] = mmXY(ev.x, ev.z); g2.fillStyle = "#c77dff"; g2.beginPath(); g2.arc(x, y, 3.5, 0, 7); g2.fill(); }
+    for (const m of G.mercs) { const [x, y] = mmXY(m.x, m.z); g2.fillStyle = "#9fb8ff"; g2.beginPath(); g2.arc(x, y, 2.5, 0, 7); g2.fill(); }
+    for (const h of G.dogs || []) { const [x, y] = mmXY(h.x, h.z); g2.fillStyle = h.sleepT > 0 ? "#6a4a20" : "#ff9a3a"; g2.beginPath(); g2.arc(x, y, 2.6, 0, 7); g2.fill(); }
+    if (G.deer) { const [x, y] = mmXY(G.deer.x, G.deer.z); g2.strokeStyle = "rgba(159,220,255,.6)"; g2.beginPath(); g2.arc(x, y, 8 / 136 * 170, 0, 7); g2.stroke(); }
+    if (fort.merchant) { const [x, y] = mmXY(fort.merchant.x, fort.merchant.z); g2.fillStyle = "#ffcf5c"; g2.beginPath(); g2.arc(x, y, 3.5, 0, 7); g2.fill(); } }
+  const [px, py] = mmXY(player.pos.x, player.pos.z);
+  g2.save(); g2.translate(px, py); g2.rotate(-player.yaw); g2.fillStyle = "#ffcf5c";
+  g2.beginPath(); g2.moveTo(0, -6); g2.lineTo(4, 4); g2.lineTo(-4, 4); g2.closePath(); g2.fill(); g2.restore();
+}
+/* ---------------- ⏱ survival ---------------- */
+// pick a new word you don't own yet: words you struggled with before come first, then unseen ones
+function unlockWord(first){
+  const own = new Set(G.unlocked.map(w => w.id));
+  const cands = G.pool.filter(w => !own.has(w.id));
+  if (!cands.length) return null;
+  const wts = cands.map(w => { const s = stats[w.id]; return s ? Math.max(.3, 1 + s.w * 1.5 - s.r * .4) : 1.2; });
+  let r = Math.random() * wts.reduce((a, b) => a + b, 0), pickW = cands[0];
+  for (let i = 0; i < cands.length; i++) { r -= wts[i]; if (r <= 0) { pickW = cands[i]; break; } }
+  G.unlocked.push(pickW); G.newIds.add(pickW.id);
+  if (!first) {
+    SFX.pickup(); say([wordClip(pickW.id)], { interrupt: true });
+    helperShow(`새 단어! <b class="typed">${esc(pickW.kr)}</b> <small>= ${esc(meaning(pickW))} · ${POS_KO[pickW.pos]}</small>`, 5);
+    $("#helperText").dataset.for = "";
+    objectiveFlash(`🎒 새 단어 해금 · New word: <b>${esc(pickW.kr)}</b> — ${G.unlocked.length} words in your backpack`);
+  }
+  return pickW;
+}
+function survivalTick(dt){
+  if (G.mode !== "survival" || G.tut || G.over) return;
+  G.survT += dt;
+  const words = G.unlocked.length, alive = G.aliens.filter(a => !a.dead).length;
+  const cap = Math.min(30, 6 + words);
+  G.spawnT -= dt;
+  if (G.spawnT <= 0 && alive < cap) {
+    G.spawnT = Math.max(.9, 3.4 - words * .07 - G.survT * .004);
+    const casters = G.aliens.filter(a => !a.dead && a.caster).length;
+    const caster = words >= 10 && casters < 2 && Math.random() < .08;
+    spawnAlien(world.farSpot(player.pos.x, player.pos.z, 26, 70), { rise: true, caster,
+      speed: caster ? .9 : Math.min(1.5, rnd(.85, 1.1) + words * .01), skills: caster ? { orb: true, slam: false } : { orb: false, slam: true } });
+  }
+  if (Math.floor(G.survT) !== G.lastSec) { G.lastSec = Math.floor(G.survT); renderTop(); }
+}
+/* ---------------- 🏃 escape ---------------- */
+const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xffcf5c, transparent: true, opacity: .22, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
+beam.visible = false; scene.add(beam);
+function placeBeam(){ const cp = world.route[G.cp]; if (!cp) { beam.visible = false; return; } beam.visible = true; beam.position.set(cp.x, world.groundY(cp.x, cp.z) + 30, cp.z); }
+function escapeTick(dt, rdt){
+  if (G.mode !== "escape" || G.over) return;
+  G.escT += dt;
+  beam.material.opacity = .16 + Math.sin(G.time * 3) * .06;
+  // checkpoint reached?
+  const cp = world.route[G.cp];
+  if (cp && Math.hypot(player.pos.x - cp.x, player.pos.z - cp.z) < 4 && Math.abs(player.feet - world.groundY(cp.x, cp.z)) < 2) {
+    G.cp++; SFX.pickup(); player.hp = Math.min(100, player.hp + 30); renderHP();
+    if (G.cp >= world.route.length) { G.won = true; beam.visible = false; say([lineClip("clear")]); setTimeout(gameOver, 600); return; }
+    objectiveFlash(`✓ ${cp.ko} — 다음 · next: <b>${world.route[G.cp].ko}</b> <small>${world.route[G.cp].en} · +30 HP</small>`); placeBeam();
+  }
+  // goal arrow (or the note, while it waits to be read)
+  const tgt = G.note ? { x: G.note.s.position.x, z: G.note.s.position.z, label: "📜 쪽지 · read the note" } : cp ? { x: cp.x, z: cp.z, label: `🏃 ${cp.ko} · ${cp.en}` } : null;
+  $("#radar").hidden = !tgt || G.backpackOpen || G.noteOpen;
+  if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
+    $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`;
+    $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
+  // the note: walk into it to read
+  if (G.note) { G.note.t += rdt; G.note.s.position.y = G.note.y + Math.sin(G.note.t * 3) * .15; G.note.s.material.rotation = Math.sin(G.note.t * 2) * .15;
+    if (!G.noteOpen && Math.hypot(G.note.s.position.x - player.pos.x, G.note.s.position.z - player.pos.z) < 1.6) openNote(); }
+  // the horde: calm after a special, otherwise a steady stream from all around, harder every checkpoint
+  if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
+  const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(28, 10 + G.cp * 4 + G.unlocked.length);
+  G.spawnT -= dt;
+  if (G.spawnT <= 0 && alive < cap) {
+    G.spawnT = Math.max(.45, 1.3 - G.cp * .15 - G.escT * .002);
+    G.spawned++;
+    const special = G.spawned % 25 === 0 && !G.aliens.some(a => a.special && !a.dead) && !G.note && G.unlocked.length < G.pool.length;
+    if (special) {
+      const nw = nextNewWord();
+      const a = new Alien(scene, world.farSpot(player.pos.x, player.pos.z, 18, 34), nw, { rise: true, special: true, shirt: "?", hp: 320, speed: 1.1, skills: { orb: false, slam: true } });
+      a.id = "sp" + G.spawned; a.pos.y = world.groundY(a.pos.x, a.pos.z); a.baseY = a.pos.y; G.aliens.push(a);
+      objectiveFlash("⭐ 특별한 적이 나타났다! · A <b>special</b> enemy appeared — any word hurts it. Kill it for a new word!"); SFX.charge();
+    } else {
+      const caster = G.cp >= 2 && Math.random() < .06 && G.aliens.filter(a => a.caster && !a.dead).length < 2;
+      const w = nextWeakWord();
+      spawnAlienShirt(world.farSpot(player.pos.x, player.pos.z, 22, 55), w, { rise: true, caster,
+        speed: caster ? 1.1 : rnd(1.5, 2.1) + G.cp * .08, skills: caster ? { orb: true, slam: false } : { orb: false, slam: true } });
+    }
+  }
+}
+function spawnAlienShirt(pos, w, opt){
+  const f = world.freeSpot(pos.x, pos.z); pos.x = f.x; pos.z = f.z; pos.y = world.groundY(pos.x, pos.z);
+  const a = new Alien(scene, pos, w, { ...opt, shirt: w.kr }); a.id = Math.random().toString(36).slice(2); G.aliens.push(a); return a;
+}
+function nextNewWord(){
+  const own = new Set(G.unlocked.map(w => w.id)), cands = G.pool.filter(w => !own.has(w.id));
+  const wts = cands.map(w => { const s = stats[w.id]; return s ? Math.max(.3, 1 + s.w * 1.5 - s.r * .4) : 1.2; });
+  let r = Math.random() * wts.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < cands.length; i++) { r -= wts[i]; if (r <= 0) return cands[i]; }
+  return cands[0];
+}
+// the special dies: a huge blast clears the street, 10 s of calm, and a note with the new word is left behind
+function specialKill(a){
+  fxOut({ blast: [a.pos.x, a.pos.y, a.pos.z] }); if (G.coop) G.notePass = { host: false, client: false };
+  G.shake = 1.2; SFX.slam(); SFX.kill();
+  const v = $("#vignette"); v.classList.remove("hurt"); v.style.boxShadow = "inset 0 0 400px 200px rgba(255,230,160,.8)"; setTimeout(() => v.style.boxShadow = "", 350);
+  for (let i = 0; i < 4; i++) burst(a.aimPoint(), [0xffcf5c, 0xffffff, 0xff8a3a, 0x7cf7d4][i], 120, 16 + i * 4);
+  for (const o of G.aliens) if (!o.dead && o !== a) { burst(o.aimPoint(), 0xffcf5c, 30, 7); o.die(); G.kills++; G.score += 50; }
+  G.calmT = 10; G.lastCalm = -1; G.spawnT = 1.5;
+  const c = document.createElement("canvas"); c.width = c.height = 128; const g2 = c.getContext("2d");
+  g2.fillStyle = "#f6e7c1"; g2.beginPath(); g2.roundRect(24, 14, 80, 100, 8); g2.fill(); g2.strokeStyle = "#8a6a2a"; g2.lineWidth = 4; g2.stroke();
+  g2.fillStyle = "#8a6a2a"; for (let i = 0; i < 5; i++) g2.fillRect(36, 34 + i * 14, i === 4 ? 36 : 56, 5);
+  g2.font = "bold 30px sans-serif"; g2.fillStyle = "#d4552a"; g2.fillText("★", 70, 104);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, toneMapped: false, depthWrite: false }));
+  const y = world.groundY(a.pos.x, a.pos.z) + 1.3; s.position.set(a.pos.x, y, a.pos.z); s.scale.set(1.1, 1.1, 1); scene.add(s);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffcf5c, transparent: true, opacity: .8, depthWrite: false, blending: THREE.AdditiveBlending })); glow.scale.set(3, 3, 1); s.add(glow);
+  G.note = { s, y, t: 0, w: a.word };
+  objective("💥 쾅! 잠깐 조용해졌어요 — 쪽지를 읽으세요 · The street is clear for 10 s — go read the <b>note</b> 📜");
+  setTimeout(() => { if (G.running && G.mode === "escape") objective(""); }, 6000);
+  renderTop();
+}
+function openNote(){
+  const w = G.note.w; G.noteOpen = true; G.panel = "note"; G.timeScale = 0; $("#note .nHead").textContent = "📜 새 단어 · New word"; document.exitPointerLock && document.exitPointerLock();
+  say([wordClip(w.id)], { interrupt: true });
+  const C = CAT[w.cat];
+  $("#noteBody").innerHTML = `<div class="nKr">${esc(w.kr)} <button id="noteSay">🔊</button></div>
+    <div class="nMean">${esc(meaning(w))}</div>
+    <div class="nTags"><span>${POS_KO[w.pos]} · ${esc({ noun: "noun", verb: "verb", adjective: "adjective", adverb: "adverb", other: "expression" }[w.pos] || "")}</span><span>${C.icon} ${esc(C.ko)} · ${esc(C.en)}</span></div>
+    ${w.ex ? `<div class="nEx">${esc(w.ex)}${w.exEn ? `<small>${esc(w.exEn)}</small>` : ""}</div>` : ""}
+    <div class="nHint">읽고 나서 퀴즈를 통과하면 이 단어가 내 것이 돼요 · Pass the quiz and this word is yours (key <b>${G.unlocked.length + 1}</b>).</div>`;
+  Q = null; $("#noteClose").hidden = false; $("#noteClose").textContent = "퀴즈 시작 · Start the quiz (E)";
+  $("#note").hidden = false; $("#noteSay").onclick = () => say([wordClip(w.id)], { interrupt: true });
+}
+/* ---- the quiz: new word → meaning, new word → type, then earlier words (meaning → Korean). Perfect round to pass. ---- */
+let Q = null;
+const POS_LIST = ["명사", "동사", "형용사", "부사", "기타"];
+const shuffleA = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function distinct(list, n, key, avoid){
+  const out = [], seen = new Set(avoid.map(key));
+  for (const x of shuffleA(list)) { const k = key(x); if (!k || seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= n) break; }
+  return out;
+}
+function buildQuiz(){
+  const w = G.note.w, prev = G.unlocked.slice();
+  const samePos = G.pool.filter(x => x.pos === w.pos && x.id !== w.id);
+  let wrongMeans = distinct(samePos, 3, meaning, [w]);
+  if (wrongMeans.length < 3) wrongMeans = wrongMeans.concat(distinct(G.pool, 3 - wrongMeans.length, meaning, [w, ...wrongMeans]));
+  const qs = [
+    { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrongMeans.map(meaning)]), ans: meaning(w) },
+    { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "기타" },
+  ];
+  // earlier words: struggled-with ones first; shown in YOUR language, answer in Korean
+  const weight = x => { const s = stats[x.id]; return (s ? 1 + s.w - s.r * .3 : 1) + Math.random(); };
+  const review = prev.slice().sort((a, b) => weight(b) - weight(a)).slice(0, 3);
+  for (const r of review) {
+    let wrong = distinct(prev.filter(x => x.id !== r.id), 3, x => x.kr, [r]);
+    if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [r, ...wrong]));
+    qs.push({ w: r, prompt: `<b>${esc(meaning(r))}</b> — 한국어로? <small>Which Korean word?</small>`, opts: shuffleA([r.kr, ...wrong.map(x => x.kr)]), ans: r.kr, audioAfter: true });
+  }
+  return qs;
+}
+function startQuiz(){ Q = { qs: buildQuiz(), i: 0, wrong: 0, round: 1, lock: false }; $("#noteClose").hidden = true; renderQuiz(); }
+function renderQuiz(msg){
+  const q = Q.qs[Q.i];
+  if (q.audio && !msg) say([wordClip(q.w.id)], { interrupt: true });
+  $("#noteBody").innerHTML = `<div class="qHead">📝 퀴즈 ${Q.i + 1} / ${Q.qs.length}${Q.round > 1 ? ` · 도전 ${Q.round}번째 · try ${Q.round}` : ""}</div>
+    <div class="qPrompt">${q.prompt}</div>
+    <div class="qOpts">${q.opts.map((o, i) => `<button data-opt="${i}"><span class="k">${i + 1}</span>${esc(o)}</button>`).join("")}</div>
+    <div class="qMsg">${msg || `숫자 키 1–${q.opts.length} 또는 클릭 · keys 1–${q.opts.length} or click`}</div>`;
+}
+function answerQuiz(idx){
+  if (!Q || Q.lock) return; const q = Q.qs[Q.i]; if (idx < 0 || idx >= q.opts.length) return;
+  Q.lock = true; const ok = q.opts[idx] === q.ans;
+  const btns = [...document.querySelectorAll("#noteBody [data-opt]")];
+  btns[idx].classList.add(ok ? "right" : "wrong"); if (!ok) btns[q.opts.indexOf(q.ans)].classList.add("right");
+  if (ok) SFX.select(); else { SFX.resist(); Q.wrong++; }
+  mark(q.w, ok);
+  if (q.audioAfter) say([wordClip(q.w.id)], { interrupt: true });
+  $("#noteBody .qMsg").innerHTML = ok ? "✅ 맞아요! · Correct" : `❌ 정답: <b>${esc(q.ans)}</b>`;
+  setTimeout(() => {
+    Q.lock = false; Q.i++;
+    if (Q.i < Q.qs.length) { renderQuiz(); return; }
+    if (Q.wrong === 0 && Q.onPass) { SFX.pickup(); const cb = Q.onPass; Q = null; cb(); return; }
+    if (Q.wrong === 0) { SFX.pickup(); $("#noteBody").innerHTML = `<div class="qPass">🎉 통과! · Passed</div><div class="qMsg">${esc(G.note.w.kr)} = ${esc(meaning(G.note.w))}</div>`; setTimeout(closeNote, 1100); return; }
+    // not perfect: the whole quiz again, reshuffled, until a clean round
+    $("#noteBody").innerHTML = `<div class="qPass" style="color:#b8323f">다시! · Again</div><div class="qMsg">${Q.wrong} 틀렸어요 — 전부 맞힐 때까지 · ${Q.wrong} wrong, try until every answer is right</div>`;
+    setTimeout(() => { Q.round++; Q.i = 0; Q.wrong = 0; Q.qs.forEach(x => { if (!x.fixed) x.opts = shuffleA(x.opts); }); renderQuiz(); }, 1600);
+  }, ok ? 650 : 1700);
+}
+$("#noteBody").addEventListener("click", e => { const b = e.target.closest("[data-opt]"); if (b) answerQuiz(+b.dataset.opt); });
+function closeNote(){
+  if (!G.noteOpen) return;
+  if (G.coop && G.mode === "fortress") {   // co-op: my part is done; the word counts when both have passed
+    G.noteOpen = false; G.panel = null; G.timeScale = 1; $("#note").hidden = true; Q = null; lock();
+    const w = G.note.w; loadWord(w); markKill(w); G.note.s.visible = false; G.note.passed = true;
+    if (isClient()) { coopAct({ a: "note" }); objective("✓ 통과! 파트너를 기다려요 · Passed — waiting for your partner to pass the note too"); }
+    else { G.notePass.host = true; tryFinishNote(); if (!G.notePass.client) objective("✓ 통과! 파트너를 기다려요 · Passed — waiting for your partner to pass the note too"); }
+    return;
+  }
+  const w = G.note.w; scene.remove(G.note.s); G.note = null; G.noteOpen = false; G.panel = null; G.timeScale = 1; $("#note").hidden = true;
+  G.unlocked.push(w); loadWord(w); markKill(w); renderQuick(); renderTop(); lock();
+  Q = null; G.calmT = Math.max(G.calmT, 5);   // a short breather after the quiz
+  if (G.mode === "fortress") { G.waveActive = true; startWave(); if (G.unlocked.length >= 5) spawnMerchant(); }
+}
+$("#noteClose").onclick = () => { if (G.panel === "picker" || G.panel === "shop") closePanel(); else if (!Q) startQuiz(); };
+/* ---------------- 🏰 fortress ---------------- */
+const fort = { pads: [], towers: [], merchant: null, events: [] };
+function signTexture(text, sub){
+  const c = document.createElement("canvas"); c.width = 256; c.height = 128; const g2 = c.getContext("2d");
+  g2.fillStyle = "rgba(8,20,18,.85)"; g2.beginPath(); g2.roundRect(4, 4, 248, 120, 16); g2.fill(); g2.strokeStyle = "#7cf7d4"; g2.lineWidth = 5; g2.stroke();
+  g2.fillStyle = "#e9fffa"; g2.textAlign = "center"; g2.textBaseline = "middle";
+  let fs2 = 56; g2.font = `900 ${fs2}px "Malgun Gothic", sans-serif`; while (g2.measureText(text).width > 230 && fs2 > 20) { fs2 -= 3; g2.font = `900 ${fs2}px "Malgun Gothic", sans-serif`; }
+  g2.fillText(text, 128, sub ? 54 : 64);
+  if (sub) { g2.font = `22px "Malgun Gothic", sans-serif`; g2.fillStyle = "#7cf7d4"; g2.fillText(sub, 128, 102); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function clearFortifications(blast){
+  for (const p of fort.pads) scene.remove(p.g);
+  for (const t of fort.towers) { if (blast) { burst(t.crystalPos.clone(), 0x7cf7d4, 60, 9); burst(t.crystalPos.clone(), 0xffcf5c, 30, 6); } scene.remove(t.g); }
+  if (fort.merchant) scene.remove(fort.merchant.g);
+  for (const e of fort.events || []) scene.remove(e.g);
+  fort.pads = []; fort.towers = []; fort.merchant = null; fort.events = [];
+}
+function setupZone(i){
+  clearFortifications(false);
+  G.zone = i % world.zones.length; const z = world.zones[G.zone];
+  beam.visible = true; beam.position.set(z.x, world.groundY(z.x, z.z) + 30, z.z);
+  for (const [px, pz] of z.pads) addPad(px, pz);
+  for (let k = 0; k < (G.extraPads || 0); k++) addPad(z.x + Math.cos(k * 2.4 + .6) * 8, z.z + Math.sin(k * 2.4 + .6) * 8);
+  if (G.unlocked.length >= 5) spawnMerchant();
+}
+function addPad(px, pz){
+  const f = world.freeSpot(px, pz), y = world.groundY(f.x, f.z), grp = new THREE.Group(); grp.position.set(f.x, y, f.z);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.15, .35, 20), new THREE.MeshStandardMaterial({ color: 0x3a3646, roughness: .8 })); base.position.y = .17; grp.add(base);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(.85, .05, 8, 40), new THREE.MeshBasicMaterial({ color: 0x7cf7d4 })); ring.rotation.x = Math.PI / 2; ring.position.y = .38; grp.add(ring);
+  const icon = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture("🔨 E", "탑 짓기 · build"), transparent: true, depthWrite: false })); icon.position.y = 1.6; icon.scale.set(1.6, .8, 1); grp.add(icon);
+  scene.add(grp); const p = { g: grp, x: f.x, z: f.z, y, icon }; fort.pads.push(p); return p;
+}
+function spawnMerchant(at){
+  if (fort.merchant) return; const z = world.zones[G.zone], f = at || world.freeSpot(z.shop[0], z.shop[1]), y = world.groundY(f.x, f.z);
+  const grp = new THREE.Group(); grp.position.set(f.x, y, f.z);
+  const robe = new THREE.Mesh(new THREE.ConeGeometry(.55, 1.7, 14), new THREE.MeshStandardMaterial({ color: 0x5a2d6a, roughness: .8 })); robe.position.y = .85; grp.add(robe);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.28, 14, 10), new THREE.MeshStandardMaterial({ color: 0x8ab89a })); head.position.y = 1.85; grp.add(head);
+  const hood = new THREE.Mesh(new THREE.ConeGeometry(.36, .6, 14), new THREE.MeshStandardMaterial({ color: 0x3a1d45 })); hood.position.y = 2.15; grp.add(hood);
+  const lantern = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffcf5c, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); lantern.position.set(.5, 1.3, .2); lantern.scale.set(.8, .8, 1); grp.add(lantern);
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture("🛒 E", "상인 · shop"), transparent: true, depthWrite: false })); sign.position.y = 3; sign.scale.set(1.6, .8, 1); grp.add(sign);
+  scene.add(grp); fort.merchant = { g: grp, x: f.x, z: f.z, y };
+  if (!G.quietBuild) objectiveFlash("🛒 상인이 왔어요! · A <b>merchant</b> set up shop at your fortification (E)");
+}
+function buildTower(pad, word){
+  scene.remove(pad.g); fort.pads = fort.pads.filter(p => p !== pad);
+  const grp = new THREE.Group(); grp.position.set(pad.x, pad.y, pad.z);
+  const stone = new THREE.MeshStandardMaterial({ color: 0x4a4658, roughness: .85 });
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(.7, .9, .5, 8), stone); b.position.y = .25; grp.add(b);
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(.35, .5, 2.6, 8), stone); col.position.y = 1.8; grp.add(col);
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(.6, .35, .4, 8), stone); cup.position.y = 3.2; grp.add(cup);
+  const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.38), new THREE.MeshBasicMaterial({ color: 0x7cf7d4 })); crystal.position.y = 3.85; grp.add(crystal);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0x7cf7d4, transparent: true, opacity: .6, depthWrite: false, blending: THREE.AdditiveBlending })); glow.position.y = 3.85; glow.scale.set(2, 2, 1); grp.add(glow);
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(word.kr, "E: 단어 바꾸기"), transparent: true, depthWrite: false })); sign.position.y = 5; sign.scale.set(2.2, 1.1, 1); grp.add(sign);
+  scene.add(grp);
+  const t = { g: grp, x: pad.x, z: pad.z, y: pad.y, word, crystal, glow, sign, cd: 0, crystalPos: new THREE.Vector3(pad.x, pad.y + 3.85, pad.z), idle: 0 };
+  fort.towers.push(t); if (!G.quietBuild) { SFX.pickup(); burst(t.crystalPos.clone(), 0x7cf7d4, 50, 6); }
+  return t;
+}
+function setTowerWord(t, w){ t.word = w; t.sign.material.map = signTexture(w.kr, "E: 단어 바꾸기"); t.sign.material.needsUpdate = true; SFX.select(); }
+/* ---------- random events at a new site (the merchant is always there from 5 words) ---------- */
+const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: .7 });
+const EVENTS = {
+  engineer: { ko: "엔지니어", en: "Engineer: +1 tower pad at every site", cost: 400, icon: "🛠" },
+  merc: { ko: "용병", en: "Mercenary: a walking tower that follows you", cost: 100, icon: "🗡" },
+  deer: { ko: "얼음 사슴", en: "Ice deer: slowing aura + charges enemies", cost: 150, icon: "🦌" },
+};
+// TEST_EVENTS = true: every event shows up at EVERY site from wave 2 (for play-testing). Set to false for
+// the real balance: engineer from wave 3 (30 %), mercenary from wave 10 (35 %), deer waves 10–20 (30 %).
+const TEST_EVENTS = true;
+function rollEvents(){
+  const w = G.wave, spots = [];
+  if (TEST_EVENTS) {
+    spots.push("engineer");
+    if (G.mercs.length < 3) spots.push("merc");
+    if (!G.deer) spots.push("deer");
+    spots.forEach((k, i) => spawnEvent(k, i)); return;
+  }
+  if (w >= 3 && Math.random() < .3) spots.push("engineer");
+  if (w >= 10 && G.mercs.length < 3 && Math.random() < .35) spots.push("merc");
+  if (w >= 10 && w <= 20 && !G.deer && Math.random() < .3) spots.push("deer");
+  spots.forEach((k, i) => spawnEvent(k, i));
+}
+function spawnEvent(kind, i = 0, at){
+  const z = world.zones[G.zone], ang = 1.1 + i * 2.1, f = at || world.freeSpot(z.x + Math.cos(ang) * 9, z.z + Math.sin(ang) * 9), y = world.groundY(f.x, f.z);
+  const grp = kind === "deer" ? deerMesh() : kind === "merc" ? mercMesh() : engineerMesh();
+  grp.position.set(f.x, y, f.z);
+  const E = EVENTS[kind];
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(E.icon + " E", `${E.ko} · 💰${E.cost}`), transparent: true, depthWrite: false })); sign.position.y = 3.2; sign.scale.set(1.8, .9, 1); grp.add(sign);
+  scene.add(grp); fort.events.push({ kind, g: grp, x: f.x, z: f.z, y });
+  if (!G.quietBuild) objectiveFlash(`${E.icon} 누군가 왔어요! · <b>${E.ko}</b> — ${E.en} (💰${E.cost}, E)`);
+}
+function useEvent(ev){
+  if (isClient()) { coopAct({ a: "event", i: fort.events.indexOf(ev) }); return; }
+  const E = EVENTS[ev.kind];
+  if (G.coins < E.cost) { SFX.empty(); objectiveFlash(`💰 ${E.cost} 필요해요 · You need 💰${E.cost}`); return; }
+  G.coins -= E.cost; SFX.pickup(); scene.remove(ev.g); fort.events = fort.events.filter(e => e !== ev);
+  if (ev.kind === "engineer") { G.extraPads = (G.extraPads || 0) + 1; const z = world.zones[G.zone], k = G.extraPads - 1; addPad(z.x + Math.cos(k * 2.4 + .6) * 8, z.z + Math.sin(k * 2.4 + .6) * 8);
+    objectiveFlash("🛠 탑 자리 +1 · One more tower pad — at every site from now on"); }
+  if (ev.kind === "merc") { hireMerc(ev); objectiveFlash("🗡 용병 고용! · Mercenary hired — he follows you. Walk up + <b>E</b> to set his word."); }
+  if (ev.kind === "deer") { adoptDeer(ev); objectiveFlash("🦌 얼음 사슴이 함께해요! · The ice deer joins you — enemies near it are slowed. Upgrade its aura at the merchant."); }
+  renderTop();
+}
+function engineerMesh(){
+  const g2 = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.32, .7, 4, 10), mat(0xd9731f)); body.position.y = 1.05; g2.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.26, 14, 10), mat(0xc9a27a)); head.position.y = 1.85; g2.add(head);
+  const hat = new THREE.Mesh(new THREE.CylinderGeometry(.3, .32, .16, 16), mat(0xffd23f)); hat.position.y = 2.05; g2.add(hat);
+  const wrench = new THREE.Mesh(new THREE.BoxGeometry(.08, .6, .08), mat(0x9aa0aa)); wrench.position.set(.42, 1.1, .1); wrench.rotation.z = .5; g2.add(wrench);
+  return g2;
+}
+function mercMesh(){
+  const g2 = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.3, .8, 4, 10), mat(0x2f5fa8)); body.position.y = 1.1; g2.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.25, 14, 10), mat(0xc9a27a)); head.position.y = 1.95; g2.add(head);
+  const helm = new THREE.Mesh(new THREE.SphereGeometry(.28, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x8a9ab8)); helm.position.y = 1.98; g2.add(helm);
+  const gunM = new THREE.Mesh(new THREE.BoxGeometry(.1, .12, .7), mat(0x222733)); gunM.position.set(.3, 1.3, .35); g2.add(gunM);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(.07, 8, 6), new THREE.MeshBasicMaterial({ color: 0x7cf7d4 })); tip.position.set(.3, 1.3, .72); g2.add(tip);
+  return g2;
+}
+function deerMesh(){
+  const g2 = new THREE.Group(), ice = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, roughness: .3, metalness: .2, emissive: 0x3fa8ff, emissiveIntensity: .25 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.32, .9, 4, 10), ice); body.rotation.z = Math.PI / 2; body.position.y = 1.1; body.rotation.y = Math.PI / 2; g2.add(body);
+  for (const [x, z] of [[-.18, .4], [.18, .4], [-.18, -.4], [.18, -.4]]) { const l = new THREE.Mesh(new THREE.CylinderGeometry(.06, .05, .9, 6), ice); l.position.set(x, .5, z); g2.add(l); }
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(.1, .14, .6, 8), ice); neck.position.set(0, 1.45, .55); neck.rotation.x = .5; g2.add(neck);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.18, 12, 8), ice); head.position.set(0, 1.75, .75); head.scale.set(1, .9, 1.4); g2.add(head);
+  for (const s of [-1, 1]) for (let k = 0; k < 3; k++) { const a = new THREE.Mesh(new THREE.CylinderGeometry(.02, .03, .45, 5), new THREE.MeshBasicMaterial({ color: 0xe8fbff })); a.position.set(s * (.12 + k * .07), 2.05 + k * .1, .7 - k * .05); a.rotation.z = s * (.4 + k * .3); g2.add(a); }
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0x9fdcff, transparent: true, opacity: .45, depthWrite: false, blending: THREE.AdditiveBlending })); glow.position.y = 1.3; glow.scale.set(3, 3, 1); g2.add(glow);
+  return g2;
+}
+function hireMerc(ev){
+  const grp = mercMesh(); scene.add(grp);
+  const word = G.loaded || G.unlocked[0];
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(word.kr, "E: 단어 바꾸기"), transparent: true, depthWrite: false })); sign.position.y = 2.9; sign.scale.set(2, 1, 1); grp.add(sign);
+  G.mercs.push({ g: grp, x: ev.x, y: ev.y, z: ev.z, vy: 0, word, sign, cd: 0, idx: G.mercs.length });
+}
+function adoptDeer(ev){
+  const grp = deerMesh(); scene.add(grp);
+  const aura = new THREE.Mesh(new THREE.RingGeometry(7.4, 8, 56), new THREE.MeshBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: .35, side: THREE.DoubleSide, depthWrite: false }));
+  aura.rotation.x = -Math.PI / 2; aura.position.y = .06; grp.add(aura);
+  const fill = new THREE.Mesh(new THREE.CircleGeometry(7.4, 56), new THREE.MeshBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: .06, depthWrite: false }));
+  fill.rotation.x = -Math.PI / 2; fill.position.y = .05; grp.add(fill);
+  G.deer = { g: grp, x: ev.x, y: ev.y, z: ev.z, vy: 0, cd: 2, charge: null, aura };
+}
+const deerSlow = () => .2 + .1 * ((G.up && G.up.deer) || 0);
+G.speedMul = a => (G.deer && Math.hypot(a.pos.x - G.deer.x, a.pos.z - G.deer.z) < 8) ? 1 - deerSlow() : 1;
+function companionsTick(dt){
+  const follow = (c, slot, maxSp) => {
+    const dx = slot.x - c.x, dz = slot.z - c.z, d = Math.hypot(dx, dz);
+    if (d > 26) { const f = world.freeSpot(slot.x, slot.z); c.x = f.x; c.z = f.z; c.y = world.groundY(f.x, f.z); return; }   // got lost: catch up
+    if (d > .6) { const s = Math.min(d, Math.min(maxSp, 1.5 + d * 1.6) * dt); world.moveEntity(c, dx / d * s, dz / d * s, .4, dt); c.g.rotation.y = Math.atan2(dx, dz); }
+  };
+  // mercenaries: walk around you, shoot enemies wearing their word
+  G.mercs.forEach((m, i) => {
+    const ang = player.yaw + Math.PI + (i - 1) * .9;
+    follow(m, { x: player.pos.x + Math.sin(ang) * 3, z: player.pos.z + Math.cos(ang) * 3 }, 8.5);
+    m.g.position.set(m.x, m.y, m.z); m.cd -= dt;
+    if (m.cd > 0) return;
+    const from = new THREE.Vector3(m.x, m.y + 1.4, m.z); let best = null, bd = 20;
+    for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || !(a.special || (a.word && a.word.id === m.word.id))) continue;
+      const d = a.pos.distanceTo(from); if (d < bd && world.losClear(from, a.aimPoint())) { bd = d; best = a; } }
+    if (!best) { m.cd = .25; return; }
+    m.cd = .8; m.g.rotation.y = Math.atan2(best.pos.x - m.x, best.pos.z - m.z);
+    tracer(from, best.aimPoint(), 0x9fb8ff); burst(best.aimPoint(), 0x9fb8ff, 10, 4); best.stagger = best.special ? .05 : .12;
+    if (best.damage(30)) onKill(best, true);
+  });
+  // the ice deer: follows you, charges an enemy every few seconds and knocks it back
+  const D2 = G.deer; if (!D2) return;
+  D2.aura.rotation.z += dt * .4; D2.aura.material.opacity = .25 + deerSlow() * .4;
+  if (D2.charge) {
+    const a = D2.charge.a; D2.charge.t += dt;
+    if (a.dead || D2.charge.t > 1.2) D2.charge = null;
+    else { const dx = a.pos.x - D2.x, dz = a.pos.z - D2.z, d = Math.hypot(dx, dz);
+      if (d < 1.4) { world.moveEntity(a.pos, dx / d * 3.5, dz / d * 3.5, .45, 0); a.stagger = .9; burst(a.aimPoint(), 0xbfe8ff, 30, 6); SFX.dash(); D2.charge = null; }
+      else { const s = Math.min(d, 14 * dt); world.moveEntity(D2, dx / d * s, dz / d * s, .4, dt); D2.g.rotation.y = Math.atan2(dx, dz); } }
+  } else {
+    const ang = player.yaw + Math.PI * .75;
+    follow(D2, { x: player.pos.x + Math.sin(ang) * 2.6, z: player.pos.z + Math.cos(ang) * 2.6 }, 9);
+    D2.cd -= dt;
+    if (D2.cd <= 0) { let best = null, bd = 10; for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || a.special) continue; const d = Math.hypot(a.pos.x - D2.x, a.pos.z - D2.z); if (d < bd) { bd = d; best = a; } }
+      if (best) { D2.charge = { a: best, t: 0 }; D2.cd = 3.5; } else D2.cd = .4; }
+  }
+  D2.g.position.set(D2.x, D2.y, D2.z);
+}
+function towersTick(dt){
+  for (const t of fort.towers) {
+    t.crystal.rotation.y += dt * 2; t.cd -= dt;
+    if (t.cd > 0) continue;
+    let best = null, bd = 22;
+    for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || !(a.special || (a.word && a.word.id === t.word.id))) continue;
+      const d = a.pos.distanceTo(t.crystalPos); if (d < bd && world.losClear(t.crystalPos, a.aimPoint())) { bd = d; best = a; } }
+    // no enemy with this tower's word in range: the crystal dims — time to change its word?
+    t.glow.material.opacity = best ? .7 : .15; t.crystal.material.color.setHex(best ? 0x7cf7d4 : 0x3a6a60);
+    if (!best) { t.cd = .25; continue; }
+    t.cd = .95;
+    tracer(t.crystalPos.clone(), best.aimPoint(), 0x7cf7d4); SFX.shotGood();
+    const dmg = 34 * (1 + .5 * ((G.up && G.up.tower) || 0)); burst(best.aimPoint(), 0x7cf7d4, 12, 4); best.stagger = best.special ? .05 : .15;
+    if (best.damage(dmg)) onKill(best, true);
+  }
+}
+// what can I interact with (E)?
+function nearestInteract(){
+  const near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
+  if (G.coop && partner.downed && !player.downed && near({ x: partner.pos.x, z: partner.pos.z, y: partner.feet }, 2.4)) return { kind: "revive", label: `E 꾹 누르기 · hold E to revive your partner ${Math.round((G.reviveT || 0) / 3 * 100)}%` };
+  for (const t of fort.towers) if (near(t, 2.6)) return { kind: "tower", o: t, label: `E · 탑 단어 바꾸기 · change tower word (${esc(t.word.kr)})` };
+  for (const p of fort.pads) if (near(p, 2.2)) return { kind: "pad", o: p, label: "E · 탑 짓기 — 퀴즈 · build a tower (quiz)" };
+  if (near(fort.merchant, 2.6)) return { kind: "shop", o: fort.merchant, label: "E · 상인 · shop" };
+  for (const ev of fort.events) if (near(ev, 2.8)) { const E = EVENTS[ev.kind]; return { kind: "event", o: ev, label: `E · ${E.icon} ${E.ko} — ${esc(E.en)} · 💰${E.cost}` }; }
+  for (const m of G.mercs) if (near(m, 2.4)) return { kind: "tower", o: m, label: `E · 용병 단어 바꾸기 · mercenary word (${esc(m.word.kr)})` };
+  return null;
+}
+// ---- panels on the paper (#note): tower quiz, tower word picker, shop. The world slows, it doesn't stop. ----
+function openPanel(kind, head){
+  G.noteOpen = true; G.panel = kind; G.timeScale = .15; document.exitPointerLock && document.exitPointerLock();
+  $("#note .nHead").textContent = head; $("#noteClose").hidden = kind !== "picker" && kind !== "shop"; $("#noteClose").textContent = "닫기 · Close (Esc)";
+  $("#note").hidden = false; $("#vignette").classList.add("slow");
+}
+function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = null; $("#note").hidden = true; $("#vignette").classList.remove("slow"); lock(); }
+function knownQuestion(){
+  const known = G.unlocked, w = pick(known), kind = pick(["mean", "kr", "pos"]);
+  if (kind === "mean") { const wrong = distinct(G.pool.filter(x => x.pos === w.pos), 3, meaning, [w]); while (wrong.length < 3) wrong.push(...distinct(G.pool, 3 - wrong.length, meaning, [w, ...wrong]));
+    return { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }; }
+  if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
+    return { w, prompt: `<b>${esc(meaning(w))}</b> — 한국어로? <small>Which Korean word?</small>`, opts: shuffleA([w.kr, ...wrong.map(x => x.kr)]), ans: w.kr, audioAfter: true }; }
+  return { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "기타" };
+}
+function towerQuiz(pad){
+  openPanel("towerquiz", "🔨 탑 짓기 퀴즈 · Build quiz");
+  const known = G.unlocked, qs = [];
+  for (let i = 0; i < 3; i++) {
+    const w = pick(known), kind = pick(known.length > 1 ? ["mean", "kr", "pos"] : ["mean", "kr", "pos"]);
+    if (kind === "mean") { const wrong = distinct(G.pool.filter(x => x.pos === w.pos), 3, meaning, [w]); while (wrong.length < 3) wrong.push(...distinct(G.pool, 3 - wrong.length, meaning, [w, ...wrong]));
+      qs.push({ w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }); }
+    else if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
+      qs.push({ w, prompt: `<b>${esc(meaning(w))}</b> — 한국어로? <small>Which Korean word?</small>`, opts: shuffleA([w.kr, ...wrong.map(x => x.kr)]), ans: w.kr, audioAfter: true }); }
+    else qs.push({ w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "기타" });
+  }
+  Q = { qs, i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel();
+    if (isClient()) { coopAct({ a: "build", i: fort.pads.indexOf(pad), w: (G.loaded || G.unlocked[0]).id }); objectiveFlash("🗼 탑 완성! · Tower built"); return; }
+    const t = buildTower(pad, G.loaded || G.unlocked[0]);
+    objectiveFlash(`🗼 탑 완성! · Tower built — it shoots enemies wearing <b>${esc(t.word.kr)}</b>. Walk up + <b>E</b> to change its word.`); } };
+  renderQuiz();
+}
+function towerPicker(t){
+  openPanel("picker", "🗼 탑 단어 · Tower word");
+  G.pickerTower = t;
+  $("#noteBody").innerHTML = `<div class="qPrompt">이 탑이 쏠 단어 · <small>Which word should this tower shoot?</small></div>
+    <div class="qOpts">${G.unlocked.slice(0, 9).map((w, i) => `<button data-pick="${i}" class="${w.id === t.word.id ? "right" : ""}"><span class="k">${i + 1}</span>${esc(w.kr)}</button>`).join("")}</div>
+    <div class="qMsg">숫자 키 또는 클릭 · keys or click</div>`;
+}
+const SHOP = [
+  { id: "mag", ko: "탄창 확장", en: "Bigger magazine (+4)", max: 3, cost: l => 150 + l * 50 },
+  { id: "reload", ko: "빠른 장전", en: "Faster reload (−35%)", max: 2, cost: l => 150 + l * 50 },
+  { id: "pierce", ko: "관통탄", en: "Piercing shots — also hit 2 enemies behind with the same word", max: 1, cost: () => 200 },
+  { id: "tower", ko: "탑 강화", en: "Towers +50% damage", max: 2, cost: l => 150 + l * 50 },
+  { id: "deer", ko: "얼음 사슴 오라", en: "Ice deer aura: enemies +10% slower", max: 4, cost: () => 200, show: () => !!G.deer },
+  { id: "nuke", ko: "말살", en: "Wipe-out (F): every enemy with your loaded word dies · 45 s cooldown · needs 30 words", max: 1, cost: () => 350, need: 30 },
+];
+const shopList = () => SHOP.filter(s => !s.show || s.show());
+function openShop(){ openPanel("shop", "🛒 상인 · Merchant"); renderShop(); }
+function renderShop(){
+  $("#noteBody").innerHTML = `<div class="qHead">💰 ${G.coins} coins</div><div class="shop">${shopList().map((s, i) => { const l = G.up[s.id] || 0, maxed = l >= s.max, locked = s.need && G.unlocked.length < s.need;
+    return `<button data-buy="${i}" ${maxed || locked ? "disabled" : ""}><span class="k">${i + 1}</span><b>${esc(s.ko)}</b> <small>${esc(s.en)}</small><span class="c">${maxed ? "MAX" : locked ? `🔒 ${s.need} words` : "💰 " + s.cost(l)}${s.max > 1 ? ` · Lv ${l}/${s.max}` : ""}</span></button>`; }).join("")}</div>`;
+}
+function buy(i){
+  const s = shopList()[i]; if (!s) return; const l = G.up[s.id] || 0;
+  if (isClient()) { if (G.coins < s.cost(l)) { SFX.empty(); objectiveFlash("💰 코인이 부족해요 · Not enough coins"); return; } coopAct({ a: "buy", id: s.id }); SFX.pickup(); return; }
+  if (l >= s.max || (s.need && G.unlocked.length < s.need)) return;
+  if (G.coins < s.cost(l)) { SFX.empty(); objectiveFlash("💰 코인이 부족해요 · Not enough coins"); return; }
+  G.coins -= s.cost(l); G.up[s.id] = l + 1; SFX.pickup();
+  if (s.id === "mag") { G.maxRounds = 6 + 4 * G.up.mag; G.rounds = G.maxRounds; renderAmmo(); }
+  renderShop(); renderTop();
+}
+$("#noteBody").addEventListener("click", e => {
+  const p = e.target.closest("[data-pick]"); if (p && G.panel === "picker") { pickWordFor(G.pickerTower, G.unlocked[+p.dataset.pick]); closePanel(); return; }
+  const b = e.target.closest("[data-buy]"); if (b && G.panel === "shop") buy(+b.dataset.buy);
+});
+function nukeWord(){
+  if (G.mode !== "fortress" || !G.up.nuke || G.nukeCd > 0 || !G.loaded) return;
+  if (isClient()) { coopAct({ a: "nuke", w: G.loaded.id }); G.nukeCd = 45; return; }
+  G.nukeCd = 45; G.shake = .8; SFX.slam();
+  const v = $("#vignette"); v.style.boxShadow = "inset 0 0 300px 150px rgba(124,247,212,.7)"; setTimeout(() => v.style.boxShadow = "", 300);
+  let n = 0; for (const a of G.aliens) if (!a.dead && !a.special && a.word && a.word.id === G.loaded.id) { burst(a.aimPoint(), 0x7cf7d4, 40, 8); a.damage(9999); onKill(a); n++; }
+  objectiveFlash(`☄️ 말살! · Wipe-out: <b>${n}</b> × ${esc(G.loaded.kr)}`);
+}
+function startWave(){
+  G.wave++; G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.calmT = 8; G.lastCalm = -1;
+  G.waveSize = 50 + (G.wave - 1) * 2;   // 50, 52, 54 … ~250 at wave 100
+  if (G.wave > 1) { setupZone(G.zone + 1); rollEvents(); }
+  const z = world.zones[G.zone];
+  objective(`🏰 Wave ${G.wave} — 요새로 가세요 · go to the fortification at <b>${z.ko}</b> (${z.en}) and build towers. ${G.waveSize} enemies, then the boss.`);
+  setTimeout(() => { if (G.mode === "fortress" && G.running) objective(""); }, 7000);
+  renderTop();
+}
+/* ---------- boss hounds 🐕 ---------- */
+function makeHound(x, z){
+  const f = world.freeSpot(x, z), y = world.groundY(f.x, f.z), grp = new THREE.Group();
+  const fur = new THREE.MeshStandardMaterial({ color: 0x5a1a22, roughness: .6, emissive: 0x3a0610, emissiveIntensity: .3 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.26, .8, 4, 10), fur); body.rotation.x = Math.PI / 2; body.position.y = .75; grp.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.24, 12, 10), fur); head.position.set(0, .95, .62); grp.add(head);
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(.18, .14, .3), fur); snout.position.set(0, .88, .86); grp.add(snout);
+  const eyeM = new THREE.MeshBasicMaterial({ color: 0xffd23f });
+  for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(.045, 8, 6), eyeM); e.position.set(s * .1, 1.02, .8); grp.add(e);
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(.07, .2, 6), fur); ear.position.set(s * .13, 1.18, .58); grp.add(ear); }
+  const legs = [];
+  for (const [lx, lz] of [[-.16, .38], [.16, .38], [-.16, -.38], [.16, -.38]]) { const p = new THREE.Group(); p.position.set(lx, .7, lz); grp.add(p);
+    const l = new THREE.Mesh(new THREE.CylinderGeometry(.06, .05, .7, 6), fur); l.position.y = -.35; p.add(l); legs.push(p); }
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(.03, .05, .5, 6), fur); tail.position.set(0, .95, -.65); tail.rotation.x = -.8; grp.add(tail);
+  const zzz = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture("💤", "10 s"), transparent: true, depthWrite: false })); zzz.position.y = 1.9; zzz.scale.set(1.2, .6, 1); zzz.visible = false; grp.add(zzz);
+  grp.position.set(f.x, y, f.z); scene.add(grp);
+  const h = { g: grp, x: f.x, y, z: f.z, vy: 0, hits: 0, sleepT: 0, cd: 2, path: null, repathT: 0, t: Math.random() * 5, legs, eyeM, zzz, body };
+  body.userData.dog = h; head.userData.dog = h; h.hitMeshes = [body, head];
+  return h;
+}
+function hitHound(h, point){
+  if (h.sleepT > 0) return;
+  h.hits++; burst(point, 0xffd23f, 10, 4); floater(point, `🐕 ${h.hits}/10`, "#ffd23f", 22, .9, "dog" + G.dogs.indexOf(h));
+  if (h.hits >= 10) { h.sleepT = 10; h.hits = 0; h.zzz.visible = true; SFX.pickup(); objectiveFlash("💤 사냥개가 잠들었어요 · A hound is asleep for 10 s"); }
+}
+function houndsTick(dt){
+  for (const h of G.dogs) {
+    h.t += dt;
+    if (h.sleepT > 0) {   // lying down, snoring
+      h.sleepT -= dt; h.legs.forEach(l => l.rotation.x = 1.4); h.g.position.set(h.x, h.y - .35, h.z); h.eyeM.color.setHex(0x331010);
+      h.zzz.position.y = 1.5 + Math.sin(h.t * 2) * .12;
+      if (h.sleepT <= 0) { h.zzz.visible = false; h.eyeM.color.setHex(0xffd23f); objectiveFlash("🐕 사냥개가 깼어요! · A hound woke up"); }
+      continue;
+    }
+    h.cd -= dt;
+    const T = houndTarget(h), px = T.pos.x, pz = T.pos.z, dx = px - h.x, dz = pz - h.z, d = Math.hypot(dx, dz);
+    // chase: straight if the ground allows, else the nav graph
+    h.repathT -= dt;
+    if (h.repathT <= 0) { h.repathT = .4; h.path = world.walkable(h.x, h.z, px, pz) ? null : world.findPath(h.x, h.z, px, pz); }
+    let tx = px, tz = pz;
+    if (h.path && h.path.length) { tx = h.path[0].x; tz = h.path[0].z; if (Math.hypot(tx - h.x, tz - h.z) < 1.2) h.path.shift(); }
+    const mx = tx - h.x, mz = tz - h.z, md = Math.hypot(mx, mz);
+    if (d > 1.1 && md > .05 && h.cd < 3) { const s = Math.min(md, 5.5 * dt); world.moveEntity(h, mx / md * s, mz / md * s, .35, dt); h.g.rotation.y = Math.atan2(mx, mz); }
+    h.legs.forEach((l, i) => l.rotation.x = Math.sin(h.t * 16 + (i % 2 ? Math.PI : 0) + (i > 1 ? 1 : 0)) * .7);
+    h.g.position.set(h.x, h.y + Math.abs(Math.sin(h.t * 16)) * .06, h.z);
+    // bite!
+    if (T === partner) { if (d < 1.4 && h.cd <= 0 && !partner.stuck && !partner.dashing && Math.abs(h.y - partner.feet) < 1.5) { partner.stuck = h; h.cd = 999; hurt(5, h.g.position, partner); fxOut({ bite: 1 }); } }
+    else if (d < 1.4 && h.cd <= 0 && !G.noteOpen && !player.dashing && !player.downed && Math.abs(h.y - player.feet) < 1.5) biteQuiz(h);
+  }
+}
+function biteQuiz(h){
+  hurt(5, h.g.position); if (G.over) return;
+  if (G.backpackOpen) closeBackpack(false);
+  openPanel("bite", "🐕 물렸다! · Bitten — answer to break free");
+  G.timeScale = 1; $("#vignette").classList.remove("slow");   // the world does NOT slow down: the boss keeps coming
+  Q = { qs: [knownQuestion()], i: 0, wrong: 0, round: 1, lock: false, onPass: () => {
+    closePanel(); for (const o of G.dogs) o.cd = Math.max(o.cd, 2); h.cd = 4;   // grace: no instant second bite from the other hound
+    const dx = h.x - player.pos.x, dz = h.z - player.pos.z, d = Math.hypot(dx, dz) || 1;
+    world.moveEntity(h, dx / d * 3, dz / d * 3, .35, 0); objectiveFlash("🐕 벗어났어요! · Free — the hound backs off for 4 s"); } };
+  renderQuiz();
+}
+function removeHounds(blast){ for (const h of G.dogs || []) { if (blast) burst(new THREE.Vector3(h.x, h.y + .8, h.z), 0xffd23f, 30, 6); scene.remove(h.g); } G.dogs = []; }
+function bossKill(a){
+  removeHounds(true); if (G.panel === "bite") closePanel();
+  specialKill(a); clearFortifications(true); beam.visible = false; G.coins += 20; G.bossOut = false; G.waveActive = false;
+  objective("💥 보스 처치! 탑도 무너졌어요 — 쪽지를 읽으세요 · Boss down — the blast wrecked your towers. Read the <b>note</b> 📜");
+}
+function fortressTick(dt, rdt){
+  if (G.mode !== "fortress" || G.over) return;
+  G.fortT += dt; G.nukeCd = Math.max(0, (G.nukeCd || 0) - dt);
+  beam.material.opacity = .16 + Math.sin(G.time * 3) * .06;
+  const client = isClient();
+  if (!client) { towersTick(dt); companionsTick(dt); houndsTick(dt); }
+  if (fort.merchant) fort.merchant.g.rotation.y += dt * .3;
+  for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
+  // interaction prompt
+  const it = !G.noteOpen && !G.backpackOpen ? nearestInteract() : null;
+  $("#interact").hidden = !it; if (it) $("#interact").innerHTML = it.label; G.interact = it;
+  // arrow: the note if there is one, else the fortification when you're away from it
+  const z = world.zones[G.zone], dz0 = Math.hypot(z.x - player.pos.x, z.z - player.pos.z);
+  const tgt = G.note && !G.note.passed ? { x: G.note.s.position.x, z: G.note.s.position.z, label: "📜 쪽지 · read the note" } : dz0 > 18 ? { x: z.x, z: z.z, label: `🏰 ${z.ko} · ${z.en}` } : null;
+  $("#radar").hidden = !tgt || G.backpackOpen || G.noteOpen;
+  if (tgt) { const dx = tgt.x - player.pos.x, dzz = tgt.z - player.pos.z;
+    $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dzz) + player.yaw - Math.PI / 2}rad)`;
+    $("#radarDist").textContent = Math.round(Math.hypot(dx, dzz)) + " m"; $("#radar small").textContent = tgt.label; }
+  if (G.note && !G.note.passed) { G.note.t += rdt; G.note.s.position.y = G.note.y + Math.sin(G.note.t * 3) * .15;
+    if (!G.noteOpen && Math.hypot(G.note.s.position.x - player.pos.x, G.note.s.position.z - player.pos.z) < 1.6) openNote(); }
+  if (client || !G.waveActive) return;
+  if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
+  // the boss after 50 kills
+  if (G.waveKills >= G.waveSize && !G.bossOut) {
+    G.bossOut = true;
+    const nw = nextNewWord();
+    const a = new Alien(scene, world.farSpot(player.pos.x, player.pos.z, 20, 36), nw, { rise: true, special: true, shirt: "?", hp: 900 + G.wave * 150, speed: 1.7, skills: { orb: false, slam: true } });
+    a.id = "boss" + G.wave; a.pos.y = world.groundY(a.pos.x, a.pos.z); a.baseY = a.pos.y; G.aliens.push(a);
+    G.dogs = [makeHound(a.pos.x + 2, a.pos.z + 2), makeHound(a.pos.x - 2, a.pos.z + 2)];
+    objective("👑 보스 등장! + 🐕🐕 · The <b>boss</b> is here with two hounds — a bite = a quiz (you're stuck till you answer). Hounds can't die: hit one 10× and it sleeps for 10 s.");
+    setTimeout(() => { if (G.mode === "fortress" && G.running) objective(""); }, 7000); SFX.charge(); renderTop();
+  }
+  const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(26, 8 + G.wave * 2 + G.unlocked.length);
+  G.spawnT -= dt;
+  if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
+    G.spawnT = Math.max(.5, 1.6 - G.wave * .08); G.waveSpawned++;
+    const caster = G.wave >= 3 && Math.random() < .05 && G.aliens.filter(a => a.caster && !a.dead).length < 2;
+    spawnAlienShirt(world.farSpot(player.pos.x, player.pos.z, 18, 40), nextWeakWord(), { rise: true, caster,   // close enough that the fortress is never quiet for long
+      speed: caster ? 1.1 : Math.min(2.6, rnd(1.7, 2.3) + G.wave * .05), skills: caster ? { orb: true, slam: false } : { orb: false, slam: true } });
+  }
+}
+function victory(){
+  if (G.over || G.tut || G.aliens.some(a => !a.dead)) return;
+  G.won = true; say([lineClip("clear")]); gameOver();
+}
+
+/* ================================ 👥 co-op (fortress) ================================ */
+// host-authoritative: the host runs everything; the client moves/shoots locally and mirrors the host's world.
+const isHost = () => !!(G.coop && G.coop.role === "host");
+const isClient = () => !!(G.coop && G.coop.role === "client");
+const partner = { pos: new THREE.Vector3(0, 1.7, 60), feet: 0, yaw: 0, pitch: 0, hp: 100, downed: false, bleedT: 0, dashing: 0, stuck: null, lastHurt: -99, seen: false, target: new THREE.Vector3(0, 1.7, 60), avatar: null, reviving: 0 };
+G.targets = () => { const t = []; if (!player.downed) t.push(player); if (isHost() && partner.seen && !partner.downed) t.push(partner); return t.length ? t : [player]; };
+G.targetFor = a => { let best = player, bd = 1e9; for (const t of G.targets()) { const d = (t.pos.x - a.pos.x) ** 2 + (t.pos.z - a.pos.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; };
+function houndTarget(h){ let best = player, bd = 1e9; for (const t of G.targets()) { if (t === partner && partner.stuck) continue; const d = (t.pos.x - h.x) ** 2 + (t.pos.z - h.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; }
+function fxOut(ev){ if (isHost()) (G.fxQ || (G.fxQ = [])).push(ev); }
+function coopAct(ev){ if (isClient()) (G.actQ || (G.actQ = [])).push(ev); }
+function pickWordFor(t, w){ if (isClient()) { const mi = G.mercs.indexOf(t); coopAct(mi >= 0 ? { a: "mword", i: mi, w: w.id } : { a: "tword", i: fort.towers.indexOf(t), w: w.id }); setTowerWord(t, w); } else setTowerWord(t, w); }
+const wordById = id => D.words.find(w => w.id === id);
+const r2 = v => Math.round(v * 100) / 100;
+
+function makeAvatar(){
+  const grp = new THREE.Group(), m = c => new THREE.MeshStandardMaterial({ color: c, roughness: .6 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(.3, .8, 4, 10), m(0x1f8a74)); body.position.y = 1.05; grp.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.24, 14, 10), m(0xd9b48f)); head.position.y = 1.78; grp.add(head);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(.26, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), m(0x7cf7d4)); cap.position.y = 1.82; grp.add(cap);
+  const gn = new THREE.Mesh(new THREE.BoxGeometry(.1, .12, .6), m(0x2b2f3d)); gn.position.set(.28, 1.3, .3); grp.add(gn);
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture("👥 파트너", "partner"), transparent: true, depthWrite: false })); tag.position.y = 2.6; tag.scale.set(1.6, .8, 1); grp.add(tag);
+  scene.add(grp); return grp;
+}
+function coopBegin(){
+  partner.seen = isClient(); partner.hp = 100; partner.downed = false; partner.stuck = null;
+  if (partner.avatar) scene.remove(partner.avatar); partner.avatar = makeAvatar();
+  G.fxQ = []; G.actQ = []; G.fxIn = []; G.sendT = 0; G.fortT2 = 0; G.lastFort = ""; G.puppets = new Map(); G.coopDogs = []; G.coopMercs = []; G.coopDeer = null; G.coopOrbs = []; G.coopPickups = [];
+  G.coop.net.onMsg = isHost() ? hostMsg : clientMsg;
+}
+function goDown(){
+  player.downed = true; player.bleedT = 30; player.hp = 0; renderHP();
+  objective("🆘 쓰러졌어요! 파트너가 E를 꾹 눌러 살려줄 수 있어요 · You're down — your partner can revive you (hold E) · 30 s");
+}
+function revive(who){ who.downed = false; who.hp = 40; who.bleedT = 0; if (who === player) { renderHP(); objective(""); objectiveFlash("💚 살아났어요! · Revived"); } else objectiveFlash("💚 파트너를 살렸어요! · Partner revived"); SFX.heal(); }
+
+// ---------------- host ----------------
+function hostMsg(d){
+  if (!d) return;
+  if (d.s) { const [x, y, z, yaw, pitch, dash, rev] = d.s; partner.pos.set(x, y + 1.7, z); partner.feet = y; partner.yaw = yaw; partner.pitch = pitch; partner.dashing = dash ? .2 : 0; partner.target.set(x, y, z); partner.seen = true; partner.reviving = rev || 0; }
+  for (const ev of d.ev || []) {
+    if (ev.a === "shot") { const a = G.aliens.find(x => x.id === ev.id && !x.dead); if (!a || !a.word) continue;
+      G.wakeAlien(a); const good = a.special || a.word.id === ev.w;
+      tracer(new THREE.Vector3(partner.pos.x, partner.pos.y - .3, partner.pos.z), a.aimPoint(), good ? 0x7cf7d4 : 0xb8b0ff, true);
+      if (good) { const dmg = ev.head ? 55 : 36; a.stagger = a.special ? .08 : .3; burst(a.aimPoint(), 0x7cf7d4, 16, 5); if (a.damage(dmg)) onKill(a, "partner"); } else a.damage(2); }
+    else if (ev.a === "hound") { const h = G.dogs[ev.i]; if (h) hitHound(h, new THREE.Vector3(h.x, h.y + .8, h.z)); }
+    else if (ev.a === "build") { const pad = fort.pads[ev.i], w = wordById(ev.w); if (pad && w) { buildTower(pad, w); objectiveFlash(`🗼 파트너가 탑을 지었어요 · Partner built a tower (${esc(w.kr)})`); } }
+    else if (ev.a === "tword") { const t = fort.towers[ev.i], w = wordById(ev.w); if (t && w) setTowerWord(t, w); }
+    else if (ev.a === "mword") { const m = G.mercs[ev.i], w = wordById(ev.w); if (m && w) setTowerWord(m, w); }
+    else if (ev.a === "buy") { const i = shopList().findIndex(s => s.id === ev.id); if (i >= 0) buy(i); }
+    else if (ev.a === "event") { const evn = fort.events[ev.i]; if (evn) useEvent(evn); }
+    else if (ev.a === "nuke") { const w = wordById(ev.w); if (w && G.up.nuke) { const keep = G.loaded; G.loaded = w; G.nukeCd = 0; nukeWord(); G.loaded = keep; } }
+    else if (ev.a === "note") { G.notePass.client = true; tryFinishNote(); }
+    else if (ev.a === "free") { const h = partner.stuck; partner.stuck = null; for (const o of G.dogs) o.cd = Math.max(o.cd, 2); if (h && h !== true) { h.cd = 4; const dx = h.x - partner.pos.x, dz = h.z - partner.pos.z, dd = Math.hypot(dx, dz) || 1; world.moveEntity(h, dx / dd * 3, dz / dd * 3, .35, 0); } }
+  }
+}
+function tryFinishNote(){
+  if (!G.note || !G.notePass.host || !G.notePass.client) return;
+  const w = G.note.w; scene.remove(G.note.s); G.note = null;
+  if (!G.unlocked.includes(w)) G.unlocked.push(w); renderQuick(); objective("");
+  G.calmT = Math.max(G.calmT, 5); G.waveActive = true; startWave(); if (G.unlocked.length >= 5) spawnMerchant();
+  fxOut({ unlock: w.id });
+}
+function hostSnapshot(){
+  const a = G.aliens.filter(x => x.id && (!x.dead || x.removeT > 0)).map(x => [x.id, r2(x.pos.x), r2(x.pos.y), r2(x.pos.z), r2(x.root.rotation.y), x.dead ? 1 : 0, x.special ? 1 : 0, x.caster ? 1 : 0,
+    x.word ? x.word.id : "", x.state === "slam" ? 2 : x.state === "charge" ? 1 : 0, r2(x.spawnT), r2(x.stateT || 0)]);
+  return { t: "s", a,
+    h: G.dogs.map(h => [r2(h.x), r2(h.y), r2(h.z), r2(h.g.rotation.y), h.sleepT > 0 ? 1 : 0]),
+    o: G.orbs.map(o => [r2(o.mesh.position.x), r2(o.mesh.position.y), r2(o.mesh.position.z)]),
+    k: G.pickups.map(p => [r2(p.s.position.x), r2(p.s.position.y), r2(p.s.position.z)]),
+    p: [r2(player.pos.x), r2(player.feet), r2(player.pos.z), r2(player.yaw), r2(player.pitch), Math.round(player.hp), player.downed ? 1 : 0, Math.ceil(player.bleedT)],
+    me: [Math.round(partner.hp), partner.downed ? 1 : 0, Math.ceil(partner.bleedT)],
+    g: [G.wave, G.waveKills, G.waveSize, G.bossOut ? 1 : 0, Math.ceil(G.calmT), G.coins, G.zone, G.waveActive ? 1 : 0, Math.ceil(G.nukeCd || 0)],
+    n: G.note ? [r2(G.note.s.position.x), r2(G.note.y), r2(G.note.s.position.z), G.note.w.id, G.notePass.client ? 1 : 0] : null,
+    c: G.mercs.map(m => [r2(m.x), r2(m.y), r2(m.z), r2(m.g.rotation.y), m.word.id]),
+    dr: G.deer ? [r2(G.deer.x), r2(G.deer.y), r2(G.deer.z), r2(G.deer.g.rotation.y), r2(deerSlow())] : null,
+    fx: G.fxQ.splice(0, 80) };
+}
+function hostFort(){
+  return { t: "f", pads: fort.pads.map(p => [r2(p.x), r2(p.z)]), towers: fort.towers.map(t => [r2(t.x), r2(t.z), t.word.id]),
+    m: fort.merchant ? [r2(fort.merchant.x), r2(fort.merchant.z)] : null, ev: fort.events.map(e2 => [e2.kind, r2(e2.x), r2(e2.z)]),
+    words: G.unlocked.map(w => w.id), up: G.up, beam: [r2(beam.position.x), r2(beam.position.z), beam.visible ? 1 : 0], zone: G.zone };
+}
+// ---------------- client ----------------
+function clientMsg(d){
+  if (!d || !d.t) return;
+  if (d.t === "start") { Object.assign(settings, d.sel); startGame(false, "fortress"); return; }
+  if (d.t === "s") { (G.fxIn || (G.fxIn = [])).push(...(d.fx || [])); G.snap = d; }   // keep every event, even if snapshots arrive faster than frames
+  else if (d.t === "f") applyFort(d);
+  else if (d.t === "over") { $("#overStats").innerHTML = d.stats; G.won = false;
+    $("#reviewList").innerHTML = G.unlocked.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${POS_KO[w.pos]}</small></div>`).join("");
+    G.over = true; G.running = false; closeBackpack(false); $("#note").hidden = true; document.exitPointerLock && document.exitPointerLock();
+    $("#over .logo").textContent = d.title || "🏰 Game over"; setTimeout(() => { $("#hud").hidden = true; $("#over").hidden = false; }, 700); }
+}
+function applyFort(f){
+  const key = JSON.stringify([f.pads, f.towers, f.m, f.ev, f.zone]);
+  // words / upgrades always
+  const before = G.unlocked.length;
+  G.unlocked = f.words.map(wordById).filter(Boolean); G.up = f.up || {}; G.maxRounds = 6 + 4 * (G.up.mag || 0);
+  if (!G.loaded && G.unlocked.length) loadWord(G.unlocked[0]);
+  if (G.unlocked.length !== before) { renderQuick(); renderAmmo(); }
+  beam.visible = !!f.beam[2]; beam.position.set(f.beam[0], world.groundY(f.beam[0], f.beam[1]) + 30, f.beam[1]); G.zone = f.zone;
+  if (key === G.lastFort) return; G.lastFort = key;
+  G.quietBuild = true;
+  clearFortifications(false);
+  const pads = f.pads.map(([x, z]) => addPad(x, z));
+  for (const [x, z, wid] of f.towers) { const p = addPad(x, z); const w = wordById(wid); if (w) buildTower(p, w); }
+  if (f.m) spawnMerchant({ x: f.m[0], z: f.m[1] });
+  f.ev.forEach(([kind, x, z], i) => spawnEvent(kind, i, { x, z }));
+  G.quietBuild = false;
+}
+function clientPuppets(dt, rdt){
+  const s = G.snap; if (!s) return;
+  const seen = new Set();
+  for (const [id, x, y, z, ry, dead, special, caster, wid, st, spT, stT] of s.a) {
+    seen.add(id);
+    let a = G.puppets.get(id);
+    if (!a) { const w = wordById(wid) || G.unlocked[0];
+      a = new Alien(scene, new THREE.Vector3(x, y, z), w, { special: !!special, caster: !!caster, shirt: special ? "?" : w.kr, hp: 1e9 });
+      a.id = id; a.tgt = new THREE.Vector3(x, y, z); G.puppets.set(id, a); G.aliens.push(a); }
+    a.tgt.set(x, y, z); a.spawnT = spT;
+    if (dead && !a.dead) { a.die(); a.removeT = 1.4; burst(a.aimPoint(), 0x7cf7d4, 60, 9); }
+    if (a.dead) { a.update(dt, G); continue; }
+    const p = a.root.position, before = p.clone(); p.lerp(a.tgt, Math.min(1, rdt * 12));
+    a.root.rotation.y += ((((ry - a.root.rotation.y) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI) * Math.min(1, rdt * 10);
+    a.t += dt; a.state = st === 2 ? "slam" : st === 1 ? "charge" : "walk";
+    a.walkCycle(before.distanceTo(p) > .005, 1.6);
+    if (st === 2) { const k = Math.min(1, stT); a.warn.position.set(p.x, p.y + .05, p.z); a.warn.material.opacity = .15 + .35 * k; a.warn.scale.setScalar(.4 + .6 * k); a.arms.forEach(ar => ar.sh.rotation.x = -2.6 * k); }
+    else a.warn.material.opacity = 0;
+  }
+  for (const [id, a] of G.puppets) if (!seen.has(id)) { a.dispose(); G.puppets.delete(id); G.aliens = G.aliens.filter(x => x !== a); }
+}
+function clientSync(dt, rdt){
+  const s = G.snap; if (!s) return;
+  // host avatar
+  const [hx, hy, hz, hyaw, hpitch, hhp, hdown, hbleed] = s.p;
+  partner.target.set(hx, hy, hz); partner.pos.set(hx, hy + 1.7, hz); partner.feet = hy; partner.yaw = hyaw; partner.downed = !!hdown; partner.hp = hhp; partner.bleedT = hbleed;
+  // me
+  const [mhp, mdown, mbleed] = s.me;
+  if (mhp !== Math.round(player.hp)) { player.hp = mhp; renderHP(); }
+  if (mdown && !player.downed) goDown(); else if (!mdown && player.downed) revive(player);
+  player.bleedT = mbleed;
+  // game state
+  const [wave, wk, ws, boss, calm, coins, zone, active, nuke] = s.g;
+  const changed = wave !== G.wave || wk !== G.waveKills || coins !== G.coins || boss !== (G.bossOut ? 1 : 0) || calm !== Math.ceil(G.calmT);
+  Object.assign(G, { wave, waveKills: wk, waveSize: ws, bossOut: !!boss, calmT: calm, coins, zone, waveActive: !!active });
+  if (changed) renderTop();
+  // hounds
+  while (G.dogs.length < s.h.length) G.dogs.push(makeHound(s.h[G.dogs.length][0], s.h[G.dogs.length][2]));
+  while (G.dogs.length > s.h.length) { const h = G.dogs.pop(); scene.remove(h.g); }
+  s.h.forEach(([x, y, z, ry, sleep], i) => { const h = G.dogs[i]; h.t += dt; h.x = x; h.y = y; h.z = z; h.sleepT = sleep ? 1 : 0; h.zzz.visible = !!sleep;
+    h.g.position.lerp(new THREE.Vector3(x, y - (sleep ? .35 : 0), z), Math.min(1, rdt * 12)); h.g.rotation.y = ry;
+    h.legs.forEach((l, k) => l.rotation.x = sleep ? 1.4 : Math.sin(h.t * 16 + (k % 2 ? Math.PI : 0)) * .7); });
+  // orbs, pickups (render only)
+  const syncPool = (pool, list, make) => { while (pool.length < list.length) pool.push(make()); while (pool.length > list.length) scene.remove(pool.pop());
+    list.forEach(([x, y, z], i) => pool[i].position.set(x, y, z)); };
+  syncPool(G.coopOrbs, s.o, () => { const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xff5ad2, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); m.scale.set(1.4, 1.4, 1); scene.add(m); return m; });
+  syncPool(G.coopPickups, s.k, () => { const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0x6dff8a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); m.scale.set(.9, .9, 1); scene.add(m); return m; });
+  // mercenaries + deer
+  while (G.coopMercs.length < s.c.length) { const g2 = mercMesh(); scene.add(g2); const w = wordById(s.c[G.coopMercs.length][4]);
+    const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(w ? w.kr : "?", "E: 단어 바꾸기"), transparent: true, depthWrite: false })); sign.position.y = 2.9; sign.scale.set(2, 1, 1); g2.add(sign);
+    G.coopMercs.push({ g: g2, sign, word: w }); }
+  s.c.forEach(([x, y, z, ry, wid], i) => { const m = G.coopMercs[i]; m.x = x; m.y = y; m.z = z; m.g.position.set(x, y, z); m.g.rotation.y = ry;
+    if (!m.word || m.word.id !== wid) { const w = wordById(wid); if (w) setTowerWord(m, w); } });
+  G.mercs = G.coopMercs;
+  if (s.dr && !G.coopDeer) { G.coopDeer = deerMesh(); scene.add(G.coopDeer); G.deer = { x: 0, y: 0, z: 0, g: G.coopDeer }; }
+  if (s.dr) { G.coopDeer.position.set(s.dr[0], s.dr[1], s.dr[2]); G.coopDeer.rotation.y = s.dr[3]; Object.assign(G.deer, { x: s.dr[0], y: s.dr[1], z: s.dr[2] }); }
+  // the boss note
+  if (s.n && !s.n[4]) {
+    if (!G.note || G.note.w.id !== s.n[3]) { if (G.note) scene.remove(G.note.s);
+      const c = document.createElement("canvas"); c.width = c.height = 128; const g2 = c.getContext("2d"); g2.font = "90px sans-serif"; g2.textAlign = "center"; g2.fillText("📜", 64, 100);
+      const t = new THREE.CanvasTexture(c); const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false })); sp.scale.set(1.1, 1.1, 1); scene.add(sp);
+      G.note = { s: sp, y: s.n[1], t: 0, w: wordById(s.n[3]), passed: false }; }
+    G.note.s.position.x = s.n[0]; G.note.s.position.z = s.n[2];
+  } else if (G.note && (!s.n || s.n[4])) { scene.remove(G.note.s); G.note = null; }
+  // events from the host
+  const fxList = (G.fxIn || []).splice(0);
+  for (const ev of fxList) {
+    if (ev.tr) tracer(new THREE.Vector3(ev.tr[0], ev.tr[1], ev.tr[2]), new THREE.Vector3(ev.tr[3], ev.tr[4], ev.tr[5]), ev.tr[6], true);
+    else if (ev.b) burst(new THREE.Vector3(ev.b[0], ev.b[1], ev.b[2]), ev.b[3], 30, 6);
+    else if (ev.k) { const [id, wid, mine] = ev.k, a = G.puppets.get(id), w = wordById(wid);
+      if (a && !a.dead) { a.die(); a.removeT = 1.4; burst(a.aimPoint(), 0x7cf7d4, 70, 10); if (!a.special) wordGhost(a); }
+      if (mine && w) { SFX.kill(); mark(w, true); markKill(w); G.kills++; killfeed(`<b>${esc(w.kr)}</b> = ${esc(meaning(w))}`); } }
+    else if (ev.blast) { G.shake = 1.2; SFX.slam(); const v = $("#vignette"); v.style.boxShadow = "inset 0 0 400px 200px rgba(255,230,160,.8)"; setTimeout(() => v.style.boxShadow = "", 350);
+      burst(new THREE.Vector3(ev.blast[0], ev.blast[1] + 1.5, ev.blast[2]), 0xffcf5c, 150, 18); G.note && (G.note.passed = false);
+      objective("💥 보스 처치! 쪽지를 읽으세요 (둘 다 통과해야 해요) · Boss down — read the note 📜 (both of you must pass it)"); }
+    else if (ev.hurt) hurtFx();
+    else if (ev.heal) { SFX.heal(); floater(player.pos.clone().add(new THREE.Vector3(0, .3, -1)), "+20 HP", "#6dff8a", 22); }
+    else if (ev.bite) biteRemote();
+    else if (ev.unlock) { const w = wordById(ev.unlock); objective(""); if (w) { objectiveFlash(`📜 새 단어 · New word: <b>${esc(w.kr)}</b> = ${esc(meaning(w))}`); } }
+  }
+}
+function biteRemote(){
+  if (G.backpackOpen) closeBackpack(false);
+  if (G.noteOpen) { $("#note").hidden = true; G.noteOpen = false; G.panel = null; Q = null; }
+  openPanel("bite", "🐕 물렸다! · Bitten — answer to break free"); G.timeScale = 1; $("#vignette").classList.remove("slow"); hurtFx();
+  Q = { qs: [knownQuestion()], i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel(); coopAct({ a: "free" }); objectiveFlash("🐕 벗어났어요! · Free"); } };
+  renderQuiz();
+}
+function coopTick(dt, rdt){
+  if (!G.coop || G.mode !== "fortress" || G.over) return;
+  const net = G.coop.net;
+  // partner avatar
+  if (partner.avatar) { partner.avatar.visible = partner.seen; partner.avatar.position.lerp(partner.target, Math.min(1, rdt * 12)); partner.avatar.rotation.y = partner.yaw + Math.PI;
+    partner.avatar.rotation.z = partner.downed ? 1.35 : 0; }
+  // revive: hold E next to a downed partner (the client tells the host via its state)
+  const nearP = Math.hypot(partner.pos.x - player.pos.x, partner.pos.z - player.pos.z) < 2.4;
+  const holding = keys.KeyE && partner.downed && nearP && !player.downed && !G.noteOpen;
+  G.reviveT = holding ? (G.reviveT || 0) + rdt : 0;
+  if (holding && G.interact && G.interact.kind === "revive") $("#interact").innerHTML = `E 꾹 누르기 · reviving ${Math.min(100, Math.round(G.reviveT / 3 * 100))}%`;
+  G.sendT -= rdt;
+  if (isHost()) {
+    if (holding && G.reviveT >= 3) { revive(partner); G.reviveT = 0; }
+    if (partner.reviving && player.downed && nearP) { G.revByP = (G.revByP || 0) + rdt; if (G.revByP >= 3) { revive(player); G.revByP = 0; } } else G.revByP = 0;
+    // bleeding out / both down = game over; the partner regenerates like you do
+    if (player.downed) { player.bleedT -= dt; if (player.bleedT <= 0 || (partner.downed && partner.seen) || !net.partner) { gameOver(); return; } }
+    if (partner.downed) { partner.bleedT -= dt; if (partner.bleedT <= 0) { gameOver(); return; } }
+    if (!partner.downed && G.time - partner.lastHurt > 5 && partner.hp < 100) partner.hp = Math.min(100, partner.hp + rdt * 3);
+    if (G.sendT <= 0) { G.sendT = .07; net.send(hostSnapshot()); G.fortT2 -= .07; if (G.fortT2 <= 0) { G.fortT2 = .5; net.send(hostFort()); } }
+  } else {
+    clientSync(dt, rdt);
+    if (player.downed) { const b = Math.ceil(player.bleedT); if (b !== G.lastBleed) { G.lastBleed = b; objective(`🆘 쓰러졌어요 · You're down — your partner can revive you (hold E) · ${b} s`); } }
+    if (G.sendT <= 0) { G.sendT = .085;   // ≤ 12 messages a second (the relay allows 15)
+      net.send({ s: [r2(player.pos.x), r2(player.feet), r2(player.pos.z), r2(player.yaw), r2(player.pitch), player.dashing ? 1 : 0, holding ? 1 : 0], ev: (G.actQ || []).splice(0, 20) }); }
+  }
+}
+
+/* ---- lobby ---- */
+function coopStatus(html){ $("#coopStatus").innerHTML = html; }
+$("#hostBtn").onclick = () => {
+  if (G.coop) G.coop.net.close();
+  const net = new Net(); G.coop = { role: "host", net }; const code = net.host();
+  coopStatus(`방 코드 · Room code: <b class="code">${code}</b><br><small>친구에게 알려주세요 · Tell your partner this code. Waiting…</small>`);
+  net.onStatus = (k, x) => { if (k === "partner-join") { coopStatus(`방 코드 <b class="code">${code}</b> · ✅ 파트너가 들어왔어요! · Partner joined`); $("#coopStart").hidden = false; }
+    if (k === "partner-leave") { coopStatus(`방 코드 <b class="code">${code}</b> · 파트너가 나갔어요 · Partner left — waiting…`); $("#coopStart").hidden = true; if (G.running) { partner.seen = false; objectiveFlash("👥 파트너 연결이 끊겼어요 · Partner disconnected"); } }
+    if (k === "closed" && x === 4009) coopStatus("코드가 이미 사용 중 · Code taken — press Host again"); };
+};
+$("#coopStart").onclick = () => {
+  if (!G.coop || G.coop.role !== "host") return;
+  G.coop.net.send({ t: "start", sel: { ch: settings.ch, cls: settings.cls, star: settings.star } });
+  startGame(false, "fortress");
+};
+$("#joinBtn").onclick = () => {
+  const code = $("#joinCode").value.trim().toUpperCase(); if (!/^[A-Z]{4}$/.test(code)) { coopStatus("4글자 코드를 입력하세요 · Enter the 4-letter code"); return; }
+  if (G.coop) G.coop.net.close();
+  const net = new Net(); G.coop = { role: "client", net }; net.join(code);
+  coopStatus("연결 중… · Connecting…");
+  net.onStatus = (k, x) => { if (k === "open") coopStatus("✅ 연결됐어요! 호스트가 시작하길 기다려요 · Connected — waiting for the host to start");
+    if (k === "closed") { coopStatus(x === 4004 ? "그 방은 없어요 · No room with that code" : x === 4000 ? "호스트가 나갔어요 · The host left" : "연결이 끊겼어요 · Disconnected");
+      if (G.running && isClient()) { G.over = true; G.running = false; objective("👥 호스트 연결이 끊겼어요 · Lost the host"); setTimeout(() => { $("#hud").hidden = true; $("#menu").hidden = false; renderMenu(); }, 2000); } } };
+  net.onMsg = d => { if (d && d.t === "start") { Object.assign(settings, d.sel); startGame(false, "fortress"); } };
+};
+
+/* ================================ start / pause / over ================================ */
+function resetRun(){
+  clearFortifications(false); $("#interact").hidden = true;
+  removeHounds(false);
+  (G.mercs || []).forEach(m => scene.remove(m.g)); if (G.deer) scene.remove(G.deer.g);
+  if (G.note) scene.remove(G.note.s); $("#note").hidden = true; beam.visible = false;
+  for (const a of G.aliens) a.dispose(); for (const o of G.orbs) o.pop(G);
+  G.bursts.forEach(b => scene.remove(b.m || b.sprite)); G.tracers.forEach(t => scene.remove(t.m)); G.pickups.forEach(p => scene.remove(p.s));
+  G.floaters.forEach(f => f.el.remove());
+  Object.assign(G, { aliens: [], orbs: [], bursts: [], tracers: [], pickups: [], floaters: [], loaded: null, rounds: 6, reloadT: 0, fireCd: 0, recent: [],
+    total: 0, won: false, quietT: 0, unlocked: [], newIds: new Set(), nextUnlockAt: 5, survT: 0, spawnT: 2, lastSec: -1, cp: 0, escT: 0, spawned: 0, calmT: 0, note: null, noteOpen: false, panel: null, wave: 0, waveKills: 0, waveSpawned: 0, bossOut: false, waveActive: false, coins: 0, up: {}, nukeCd: 0, zone: 0, fortT: 0, maxRounds: 6, interact: null, waveSize: 50, mercs: [], deer: null, extraPads: 0, dogs: [], score: 0, kills: 0, perfect: 0, tut: null, over: false, paused: false, time: 0, timeScale: 1, runMissed: new Map(), runRight: new Set(), recentLoads: [], speaking: null });
+  Object.assign(player, { hp: 100, dashes: 2, dashCd: 0, dashing: 0, yaw: 0, pitch: 0, hasGun: false, moved: 0, downed: false, bleedT: 0 });
+  Object.assign(player.body, { x: world.spawn.x, z: world.spawn.z, y: world.groundY(world.spawn.x, world.spawn.z), vy: 0 });
+  player.feet = player.body.y; player.pos.set(player.body.x, player.feet + 1.7, player.body.z); player.vel.set(0, 0, 0);
+  $("#killfeed").innerHTML = ""; $("#helper").hidden = true;
+}
+function startGame(tutorial, mode = "district"){
+  G.mode = mode; if (mode === "survival" || mode === "escape" || mode === "fortress") tutorial = false;
+  G.pool = selectedPool(); if (G.pool.length < 6) return;
+  initAudio(); setVolume(settings.vol); preload(G.pool.map(w => w.id));
+  resetRun();
+  G.running = true; $("#menu").hidden = true; $("#over").hidden = true; $("#hud").hidden = false;
+  if (tutorial) { pedestal.visible = true; G.tut = { step: "move", text: TUT.move.text }; objective(TUT.move.text); }
+  else if (mode === "fortress" && isClient()) { pedestal.visible = false; player.hasGun = true; gun.visible = true;
+    helperShow("👥 파트너의 요새에 들어왔어요 · You joined your partner's fortress", 5); }
+  else if (mode === "fortress") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
+    const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); G.waveActive = true; setupZone(0); startWave();
+    helperShow(`첫 단어: <b class="typed">${esc(w0.kr)}</b> <small>= ${esc(meaning(w0))} · walk to a 🔨 pad + E to build a tower (quiz)</small>`, 7); say([wordClip(w0.id)]); }
+  else if (mode === "escape") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
+    const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); placeBeam();
+    objective(`🏃 탈출 모드 · Fight your way to the <b>cathedral altar</b> — follow the golden light. Read the word on their shirts! <small>1–9 / mouse wheel = switch word · first word: <b>${esc(w0.kr)}</b> = ${esc(meaning(w0))}</small>`);
+    setTimeout(() => { if (G.mode === "escape" && G.running) objective(""); }, 8000); }
+  else if (mode === "survival") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
+    const w0 = unlockWord(true); G.newIds.clear(); loadWord(w0); G.total = 0;
+    helperShow(`첫 단어: <b class="typed">${esc(w0.kr)}</b> <small>= ${esc(meaning(w0))} · every 5 kills a new word</small>`, 6); say([wordClip(w0.id)]);
+    objective("⏱ 생존 모드 · Survive! They come from everywhere — keep moving, dash (<b>Space</b>), and grow your backpack"); setTimeout(() => { if (G.mode === "survival" && G.running) objective(""); }, 6000); }
+  else { pedestal.visible = false; player.hasGun = true; gun.visible = true; loadWord(pick(G.pool)); populateDistrict();
+    helperShow("가방은 <b>Tab</b>! <small>Look at an alien to hear its word · Tab = backpack</small>", 4); say([lineClip("listen")]); }
+  renderHP(); renderAmmo(); renderDash(); renderTop(); renderQuick(); drawGunScreen();
+  if (G.coop) coopBegin();
+  lock();
+}
+function pauseGame(){ G.paused = true; $("#pause").hidden = false; $("#clickToPlay").hidden = true; document.exitPointerLock && document.exitPointerLock(); }
+function resumeGame(){ G.paused = false; $("#pause").hidden = true; lock(); }
+function gameOver(){
+  if (G.over) return;
+  if (isHost()) setTimeout(() => G.coop && G.coop.net.send({ t: "over", stats: $("#overStats").innerHTML, title: $("#over .logo").textContent }), 50);
+  G.over = true; G.running = false; closeBackpack(false); $("#note").hidden = true; G.noteOpen = false; G.panel = null; Q = null; document.exitPointerLock && document.exitPointerLock();
+  const best = store.get("wa_best", 0); if (G.score > best) store.set("wa_best", G.score);
+  if (G.mode === "fortress") {
+    const bw = store.get("wa_best_fort", 0), cleared = G.wave - 1, isBest = cleared > bw; if (isBest) store.set("wa_best_fort", cleared);
+    $("#overStats").innerHTML = [[cleared, isBest ? "🏆 waves (best)" : `waves · best ${Math.max(bw, cleared)}`], [G.kills, "enemies"], [G.unlocked.length, "words learned"], ["💰 " + G.coins, "coins left"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+    $("#reviewList").innerHTML = G.unlocked.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${POS_KO[w.pos]}</small></div>`).join("");
+  } else if (G.mode === "escape") {
+    const t = Math.floor(G.escT), fmt = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`, eb = store.get("wa_best_esc", 0), isBest = G.won && (!eb || t < eb); if (isBest) store.set("wa_best_esc", t);
+    $("#overStats").innerHTML = [[G.won ? fmt(t) : `${G.cp}/${world.route.length}`, G.won ? (isBest ? "🏆 best time" : "time") : "checkpoints"], [G.kills, "enemies"], [G.unlocked.length, "words learned"], ["★ " + G.score, "score"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+    $("#reviewList").innerHTML = G.unlocked.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${POS_KO[w.pos]}</small></div>`).join("");
+  } else if (G.mode === "survival") {
+    const t = Math.floor(G.survT), sb = store.get("wa_best_surv", 0), isBest = t > sb; if (isBest) store.set("wa_best_surv", t);
+    const fmt = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    $("#overStats").innerHTML = [[fmt(t), isBest ? "🏆 new best" : "best " + fmt(Math.max(sb, t))], [G.kills, "aliens"], [G.unlocked.length, "words"], ["★ " + G.score, "score"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+  } else $("#overStats").innerHTML = [["★ " + G.score, "score"], [G.kills, "aliens"], [G.perfect, "perfect"], [(G.total - G.aliens.filter(a => !a.dead).length) + "/" + G.total, "cleared"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+  const list = [...G.runMissed.keys()].map(id => D.words.find(w => w.id === id));
+  if (!shirtMode()) $("#reviewList").innerHTML = list.length ? list.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${CAT[w.cat].icon}</small></div>`).join("") : `<div>👏 no weak words this run</div>`;
+  $("#over .logo").textContent = G.mode === "district" && G.won ? "구역 정화 완료! · District cleared" : G.mode === "survival" ? "⏱ 생존 끝 · Survival over" : G.mode === "escape" ? (G.won ? "🏃 탈출 성공! · You escaped" : "🏃 탈출 실패 · Didn't make it") : G.mode === "fortress" ? `🏰 요새 함락 · Wave ${G.wave}` : "Game over";
+  setTimeout(() => { $("#hud").hidden = true; $("#over").hidden = false; }, 900);
+}
+$("#reviewList").onclick = e => { const b = e.target.closest("[data-say]"); if (b) say([wordClip(b.dataset.say)], { interrupt: true }); };
+$("#resumeBtn").onclick = resumeGame;
+$("#quitBtn").onclick = () => { $("#pause").hidden = true; G.paused = false; gameOver(); };
+// solo buttons leave any co-op room; Again in co-op = the host restarts both, the partner waits for the host
+const solo = f => () => { if (G.coop) { G.coop.net.close(); G.coop = null; if (partner.avatar) partner.avatar.visible = false; coopStatus(""); $("#coopStart").hidden = true; } f(); };
+$("#againBtn").onclick = () => { if (!G.coop) return startGame(false, G.mode); if (isHost()) $("#coopStart").click(); else { $("#over").hidden = true; $("#menu").hidden = false; renderMenu(); coopStatus("호스트가 다시 시작하길 기다려요 · Waiting for the host to start again"); } };
+$("#menuBtn").onclick = () => { $("#over").hidden = true; $("#menu").hidden = false; renderMenu(); };
+$("#playBtn").onclick = solo(() => startGame(!store.get("wa_tutorial_done", false)));
+$("#tutBtn").onclick = solo(() => startGame(true));
+$("#survBtn").onclick = solo(() => startGame(false, "survival"));
+$("#escBtn").onclick = solo(() => startGame(false, "escape"));
+$("#fortBtn").onclick = solo(() => startGame(false, "fortress"));
+
+/* ================================ menu ================================ */
+const UI = {
+  tagline: "외계인마다 약한 단어가 하나 있어요. 루미의 말을 듣고, 가방에서 그 단어를 찾아 장전하고, 쏘세요.<br><small>Every alien is weak to one Korean word. Listen to Lumi, find the word in your backpack, load it, fire.</small>",
+  tutorial: "🎓 튜토리얼 · Tutorial", lang: "Meaning language", labels: "Backpack labels", hints: "Lumi shows the word", sens: "Mouse sensitivity", volume: "Volume",
+  chapters: "Chapters", classes: "Classes", star: "Priority words only", resume: "▶ Resume", quit: "Quit run", over: "Game over", review: "Words to review",
+  again: "↻ Again", menu: "Menu", click: "Click to play",
+  controls: "<b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> dash · <b>Mouse</b> aim/shoot · <b>Tab</b> backpack (time slows) · <b>1–4</b> recent ammo · <b>R</b> reload · <b>Q</b> hear the word again · <b>Esc</b> pause · <b>F11</b> fullscreen",
+};
+function renderMenu(){
+  document.querySelectorAll("[data-i]").forEach(el => { const k = el.dataset.i; if (UI[k] != null) el.innerHTML = UI[k]; });
+  const done = store.get("wa_tutorial_done", false), best = store.get("wa_best", 0);
+  $("#playBtn").textContent = done ? `▶ 시작 · Play${best ? "  (best ★" + best + ")" : ""}` : "▶ 시작 · Play (starts with the tutorial)";
+  $("#langSel").innerHTML = D.langs.map(l => `<option value="${l.code}">${esc(l.native)}</option>`).join(""); $("#langSel").value = settings.lang;
+  $("#labelSel").value = settings.labels; $("#bpSel").value = settings.bpMode; $("#subsSel").value = settings.subs; $("#sensSel").value = settings.sens; $("#volSel").value = settings.vol;
+  $("#chChips").innerHTML = D.chapters.map(c => `<button class="chip${settings.ch.includes(c.id) ? " on" : ""}" data-ch="${c.id}">${esc(c.title)}<small>${esc(c.theme)}</small></button>`).join("");
+  const CL = { v: "비디오", r1: "읽기 1", r2: "읽기 2", s1: "말하기 1" };
+  $("#clsChips").innerHTML = Object.entries(CL).map(([k, t]) => `<button class="chip${settings.cls.includes(k) ? " on" : ""}" data-cls="${k}">${t}</button>`).join("");
+  $("#starChip").classList.toggle("on", settings.star);
+  const n = selectedPool().length;
+  $("#poolCount").textContent = n >= 6 ? `🎒 ${n} words in your backpack` : "Pick at least 6 words";
+  $("#poolCount").classList.toggle("bad", n < 6); $("#playBtn").disabled = $("#tutBtn").disabled = $("#survBtn").disabled = $("#escBtn").disabled = $("#fortBtn").disabled = n < 6;
+  const fb = store.get("wa_best_fort", 0); $("#fortBtn").textContent = `🏰 요새 모드 · Fortress — waves, towers by quiz, a new word per boss${fb ? `  (best: wave ${fb})` : ""}`;
+  const eb = store.get("wa_best_esc", 0); $("#escBtn").textContent = `🏃 탈출 모드 · Escape — read their shirts, reach the cathedral${eb ? `  (best ${Math.floor(eb / 60)}:${String(eb % 60).padStart(2, "0")})` : ""}`;
+  const sb = store.get("wa_best_surv", 0); $("#survBtn").textContent = `⏱ 생존 모드 · Survival — start with 1 word${sb ? `  (best ${Math.floor(sb / 60)}:${String(sb % 60).padStart(2, "0")})` : ""}`;
+}
+$("#langSel").onchange = e => { settings.lang = e.target.value; saveSettings(); };
+$("#labelSel").onchange = e => { settings.labels = e.target.value; saveSettings(); };
+$("#bpSel").onchange = e => { settings.bpMode = e.target.value; saveSettings(); };
+$("#subsSel").onchange = e => { settings.subs = e.target.value; saveSettings(); };
+$("#sensSel").oninput = e => { settings.sens = +e.target.value; saveSettings(); };
+$("#volSel").oninput = e => { settings.vol = +e.target.value; setVolume(settings.vol); saveSettings(); };
+$("#chChips").onclick = e => { const b = e.target.closest("[data-ch]"); if (!b) return; const id = b.dataset.ch; settings.ch = settings.ch.includes(id) ? settings.ch.filter(x => x !== id) : [...settings.ch, id]; saveSettings(); renderMenu(); };
+$("#clsChips").onclick = e => { const b = e.target.closest("[data-cls]"); if (!b) return; const id = b.dataset.cls; settings.cls = settings.cls.includes(id) ? settings.cls.filter(x => x !== id) : [...settings.cls, id]; saveSettings(); renderMenu(); };
+$("#starChip").onclick = () => { settings.star = !settings.star; saveSettings(); renderMenu(); };
+renderMenu();
+
+/* ================================ update ================================ */
+const clock = new THREE.Clock();
+function update(rdt){
+  const dt = rdt * G.timeScale;
+  G.time += dt;
+  world.update(G.time, rdt, player.pos.x, player.pos.z);
+  pedestal.rotation.y += rdt * .8; pedGun.position.y = 1.25 + Math.sin(G.time * 2) * .08;
+  if (!G.running || G.paused) return;
+
+  // ---- player movement (real time, not slowed: you can still reposition while the backpack is open? no — frozen) ----
+  if (!G.backpackOpen && !G.noteOpen && !player.downed) {   // no walking while a panel is open or you're down
+    const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw)), r = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+    const want = new THREE.Vector3();
+    if (keys.KeyW) want.add(f); if (keys.KeyS) want.sub(f); if (keys.KeyD) want.add(r); if (keys.KeyA) want.sub(r);
+    const sprint = keys.ShiftLeft || keys.ShiftRight;
+    if (want.lengthSq() > 0) want.normalize().multiplyScalar(sprint ? 9.5 : 6.2);
+    player.vel.x += (want.x - player.vel.x) * Math.min(1, rdt * 10); player.vel.z += (want.z - player.vel.z) * Math.min(1, rdt * 10);
+    if (player.dashing > 0) { player.dashing -= rdt; player.vel.copy(player.dashDir).multiplyScalar(19); if (player.dashing <= 0) { player.dashing = 0; player.vel.multiplyScalar(.3); } }   // exactly 0: "dashing" is checked as truthy elsewhere
+    const before = player.pos.clone();
+    world.moveEntity(player.body, player.vel.x * rdt, player.vel.z * rdt, .45, rdt);
+    player.feet = player.body.y; player.pos.set(player.body.x, player.feet + 1.7, player.body.z);
+    const moved = Math.hypot(before.x - player.pos.x, before.z - player.pos.z); player.moved += moved;
+    player.bob += moved * 2.2;
+    if (player.dashCd > 0) { player.dashCd = Math.max(0, player.dashCd - rdt); renderDash(); }
+    if (G.time - player.lastHurt > 5 && player.hp < 100) { player.hp = Math.min(100, player.hp + rdt * 3); renderHP(); }
+  }
+  // camera
+  const shake = G.shake > 0 ? G.shake * .15 : 0; G.shake = Math.max(0, G.shake - rdt);
+  camera.position.set(player.pos.x + rnd(-shake, shake), (player.downed ? player.feet + .5 : player.pos.y + Math.sin(player.bob) * .05) + rnd(-shake, shake), player.pos.z);
+  camera.rotation.set(player.pitch, player.yaw, 0, "YXZ");
+  // gun sway + kick
+  const kick = gun.userData.kick || 0; gun.userData.kick = Math.max(0, kick - rdt * 8);
+  gun.position.set(.28 + Math.sin(player.bob * .5) * .012, -.27 + Math.abs(Math.cos(player.bob * .5)) * .01 - (G.reloadT > 0 ? .12 : 0), -.5 + kick * .08);
+  gun.rotation.x = kick * .15 + (G.reloadT > 0 ? .5 : 0);
+  flash.material.opacity = Math.max(0, flash.material.opacity - rdt * 14); gunLight.intensity = Math.max(0, gunLight.intensity - rdt * 60);
+  if (G.fireCd > 0) G.fireCd -= rdt;
+  if (G.reloadT > 0) { G.reloadT -= rdt; if (G.reloadT <= 0) { G.rounds = G.maxRounds; renderAmmo(); } }
+  if (G.firing && G.fireCd <= 0 && G.rounds > 0 && !G.backpackOpen) fire();
+
+  // ---- tutorial triggers ----
+  if (G.tut) {
+    if (G.tut.step === "move" && player.moved > 3) tutNext("gun");
+    if (G.tut.step === "gun" && Math.hypot(player.pos.x - world.gunSpot.x, player.pos.z - world.gunSpot.z) < 1.8) {
+      player.hasGun = true; gun.visible = true; pedestal.visible = false; SFX.pickup();
+      loadWord(pick(G.pool)); tutNext("shoot");
+    }
+  }
+  // ---- aliens ----
+  const h = !G.backpackOpen ? aimAlien() : null;
+  $("#crosshair").classList.toggle("enemy", !!h);
+  if (h) { if (G.aimed === h.alien) G.aimT += rdt; else { G.aimed = h.alien; G.aimT = 0; }
+    if (G.aimT > .35 && !h.alien.announced && (!G.tut || G.tut.step !== "shoot") && !shirtMode()) announce(h.alien); }
+  else G.aimed = null;
+  if (isClient()) clientPuppets(dt, rdt); else for (const a of G.aliens) a.update(dt, G);
+  for (const a of G.aliens) if (a.dead && a.removeT <= 0) a.dispose();
+  G.aliens = G.aliens.filter(a => !(a.dead && a.removeT <= 0));
+  if (!isClient()) { for (const o of G.orbs) o.update(dt, G); G.orbs = G.orbs.filter(o => !o.dead); }
+  if (G.typing && G.typing.steps) { G.typing.t += rdt; while (G.typing.t > .06) { G.typing.t -= .06; G.typing.i++; } }
+  if (G.speaking && !G.speaking.dead) updateHelperHint(G.speaking);
+  // an alien too slow to kill counts as "struggled" once
+  for (const a of G.aliens) if (!a.dead && a.word && a.heardAt && !a.slowMarked && G.time - a.heardAt > 25) { a.slowMarked = true; mark(a.word, false); }
+  // pickups
+  if (!isClient()) for (const p of G.pickups) { p.t += dt; p.s.position.y = p.s.userData.base + Math.sin(p.t * 3) * .12; p.s.children[0].rotation.y += dt * 3;
+    // gone after 20 s (blinking the last 5), and pulled towards you when you're within 4 m
+    if (p.t > 20) { scene.remove(p.s); p.done = true; continue; }
+    p.s.visible = p.t < 15 || Math.sin(p.t * 18) > 0;
+    const pdx = player.pos.x - p.s.position.x, pdz = player.pos.z - p.s.position.z, pd = Math.hypot(pdx, pdz);
+    if (pd < 4 && pd > .1 && Math.abs(p.s.userData.base - .7 - player.feet) < 1.5) { const k = Math.min(1, dt * 6); p.s.position.x += pdx * k; p.s.position.z += pdz * k; }
+    if (G.coop && !partner.downed && Math.hypot(p.s.position.x - partner.pos.x, p.s.position.z - partner.pos.z) < 1.2) { partner.hp = Math.min(100, partner.hp + 20); fxOut({ heal: 20 }); scene.remove(p.s); p.done = true; continue; }
+    if (Math.hypot(p.s.position.x - player.pos.x, p.s.position.z - player.pos.z) < 1.2 && Math.abs(p.s.userData.base - .7 - player.feet) < 1.5) { player.hp = Math.min(100, player.hp + 20); renderHP(); SFX.heal(); floater(p.s.position, "+20 HP", "#6dff8a", 22); scene.remove(p.s); p.done = true; } }
+  G.pickups = G.pickups.filter(p => !p.done);
+  districtTick(rdt);
+  survivalTick(dt);
+  escapeTick(dt, rdt);
+  fortressTick(dt, rdt);
+  coopTick(dt, rdt);
+  mmT -= rdt; if (mmT <= 0) { mmT = .1; drawMinimap(); }
+  // ---- FX ----
+  for (const b of G.bursts) {
+    b.life -= b.sprite ? rdt : dt;
+    if (b.m) { const pa = b.m.geometry.attributes.position; b.v.forEach((v, i) => { v.y -= 9 * dt; pa.array[i * 3] += v.x * dt; pa.array[i * 3 + 1] += v.y * dt; pa.array[i * 3 + 2] += v.z * dt; }); pa.needsUpdate = true; b.m.material.opacity = Math.max(0, b.life / b.max); }
+    if (b.sprite) { b.sprite.position.y += rdt * .5; b.sprite.material.opacity = Math.min(1, b.life / b.max * 2.5); }
+    if (b.life <= 0) { scene.remove(b.m || b.sprite); (b.m || b.sprite).geometry && b.m && b.m.geometry.dispose(); }
+  }
+  G.bursts = G.bursts.filter(b => b.life > 0);
+  for (const t of G.tracers) { t.life -= rdt; t.m.material.opacity = Math.max(0, t.life / .09); if (t.life <= 0) { scene.remove(t.m); t.m.geometry.dispose(); } }
+  G.tracers = G.tracers.filter(t => t.life > 0);
+  for (const f of G.floaters) {
+    f.life -= rdt; f.pos.y += rdt * .8; vec.copy(f.pos).project(camera);
+    const vis = vec.z < 1 && f.life > 0; f.el.style.display = vis ? "" : "none";
+    if (vis) { f.el.style.left = (vec.x * .5 + .5) * innerWidth + "px"; f.el.style.top = (-vec.y * .5 + .5) * innerHeight + "px"; f.el.style.opacity = Math.min(1, f.life / f.max * 2); }
+    if (f.life <= 0) f.el.remove();
+  }
+  G.floaters = G.floaters.filter(f => f.life > 0);
+  if (helperHide > 0) { helperHide -= rdt; if (helperHide <= 0) $("#helper").hidden = true; }
+  renderTop();
+}
+function frame(){
+  const rdt = Math.min(.05, clock.getDelta());
+  update(rdt);
+  composer.render();
+  requestAnimationFrame(frame);
+}
+drawGunScreen();
+requestAnimationFrame(frame);
+window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
+window.__api = { partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, world, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };

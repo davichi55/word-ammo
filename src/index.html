@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>단어 탄창 · Word Ammo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="game"></div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" hidden>
+  <div id="crosshair"><i></i><i></i><i></i><i></i><b id="xhSpeak">🔊</b></div>
+  <div id="hitmarker">✕</div>
+  <div id="vignette"></div>
+  <div id="topbar"><span id="waveLbl"></span><span id="scoreLbl"></span></div>
+  <div id="objective"></div>
+  <div id="health"><div class="lbl">HP</div><div class="bar"><i id="hpFill"></i></div><div id="dashPips"></div></div>
+  <div id="quick"></div>
+  <div id="loaded">
+    <div class="tag">장전 · LOADED</div>
+    <div id="loadedWord">—</div>
+    <div id="loadedSub"></div>
+    <div id="rounds"></div>
+  </div>
+  <div id="helper" hidden>
+    <div class="face"><div class="eye"><i></i></div><div class="ant"></div></div>
+    <div class="bubble"><div class="name">루미 · Lumi</div><div id="helperText"></div></div>
+  </div>
+  <div id="floaters"></div>
+  <div id="killfeed"></div>
+  <canvas id="minimap" width="170" height="170"></canvas>
+  <div id="interact" hidden></div>
+  <div id="radar" hidden><div id="radarArrow">➤</div><div id="radarDist"></div><small>루미 레이더</small></div>
+  <div id="keys">
+    <span><b>Tab</b> 가방</span><span><b>Q</b> 다시 듣기</span><span><b>Space</b> 대시</span><span><b>1–4</b> 빠른 탄창</span><span><b>Esc</b> 메뉴</span>
+  </div>
+</div>
+
+<!-- ============ backpack ============ -->
+<div id="backpack" hidden>
+  <div class="bp">
+    <div class="bpHead">
+      <div class="bpTitle">🎒 가방 · Backpack <small id="bpCount"></small></div>
+      <div class="bpPos" id="bpPos"></div>
+      <button class="x" id="bpClose">✕</button>
+    </div>
+    <div class="bpTabs" id="bpTabs"></div>
+    <div class="bpGrid" id="bpGrid"></div>
+    <div class="bpFoot" id="bpFoot">Tab 닫기 · 클릭해서 장전 · ←/→ 탭</div>
+  </div>
+</div>
+
+<!-- ============ menus ============ -->
+<div id="menu" class="screen">
+  <div class="panel">
+    <div class="logo">단어 탄창</div>
+    <div class="logoSub">WORD AMMO</div>
+    <div class="tagline" data-i="tagline"></div>
+    <button class="btn main" id="playBtn"></button>
+    <button class="btn fort" id="fortBtn"></button>
+    <div class="coop">
+      <div class="gl">👥 요새 같이 하기 · Fortress co-op (2 players)</div>
+      <div class="coopRow"><button class="btn" id="hostBtn">방 만들기 · Host</button><input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off"><button class="btn" id="joinBtn">참가 · Join</button></div>
+      <div id="coopStatus"></div>
+      <button class="btn main" id="coopStart" hidden>▶ 같이 시작 · Start co-op</button>
+    </div>
+    <button class="btn esc" id="escBtn"></button>
+    <button class="btn surv" id="survBtn"></button>
+    <button class="btn" id="tutBtn" data-i="tutorial"></button>
+    <div class="settings">
+      <label><span data-i="lang"></span><select id="langSel"></select></label>
+      <label><span data-i="labels"></span><select id="labelSel"><option value="ko">한국어 (Korean)</option><option value="meaning">Meaning</option></select></label>
+      <label><span>Backpack sorting</span><select id="bpSel"><option value="type">By word type (명사 / 동사 …)</option><option value="cat">By meaning category (tabs)</option></select></label>
+      <label><span data-i="hints"></span><select id="subsSel"><option value="type">Typed out (recommended)</option><option value="audio">Audio only (ear training)</option></select></label>
+      <label><span data-i="sens"></span><input type="range" id="sensSel" min="0.4" max="2.5" step="0.1"></label>
+      <label><span data-i="volume"></span><input type="range" id="volSel" min="0" max="1" step="0.05"></label>
+    </div>
+    <div class="grp"><div class="gl" data-i="chapters"></div><div class="chips" id="chChips"></div></div>
+    <div class="grp"><div class="gl" data-i="classes"></div><div class="chips" id="clsChips"></div></div>
+    <div class="grp row"><button class="chip" id="starChip">★ <span data-i="star"></span></button><span id="poolCount"></span></div>
+    <div class="controls" data-i="controls"></div>
+  </div>
+</div>
+
+<div id="pause" class="screen" hidden>
+  <div class="panel small">
+    <div class="logo sm">⏸</div>
+    <button class="btn main" id="resumeBtn" data-i="resume"></button>
+    <button class="btn" id="quitBtn" data-i="quit"></button>
+  </div>
+</div>
+
+<div id="over" class="screen" hidden>
+  <div class="panel">
+    <div class="logo sm" data-i="over"></div>
+    <div class="stats" id="overStats"></div>
+    <div class="gl" data-i="review"></div>
+    <div class="review" id="reviewList"></div>
+    <button class="btn main" id="againBtn" data-i="again"></button>
+    <button class="btn" id="menuBtn" data-i="menu"></button>
+  </div>
+</div>
+
+<div id="note" hidden><div class="paper"><div class="nHead">📜 새 단어 · New word</div><div id="noteBody"></div><button class="btn main" id="noteClose">배웠어요! · Got it (E)</button></div></div>
+
+<div id="clickToPlay" hidden><div>🖱 <span data-i="click"></span></div></div>
+
+<script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js" } }</script>
+<script src="data/words.js"></script>
+<script type="module" src="js/game.js"></script>
+</body>
+</html>
