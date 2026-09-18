@@ -864,9 +864,9 @@ const EVENTS = {
   merc: { ko: "용병", en: "Mercenary: a walking tower that follows you", cost: 100, icon: "🗡" },
   deer: { ko: "얼음 사슴", en: "Ice deer: slowing aura + charges enemies", cost: 150, icon: "🦌" },
 };
-// TEST_EVENTS = true: every event shows up at EVERY site from wave 2 (for play-testing). Set to false for
-// the real balance: engineer from wave 3 (30 %), mercenary from wave 10 (35 %), deer waves 10–20 (30 %).
-const TEST_EVENTS = true;
+// TEST_EVENTS = true: every event shows up at EVERY site from wave 2 (for play-testing). false = the real
+// balance: engineer from wave 3 (30 %), mercenary from wave 10 (35 %), deer waves 10–20 (30 %).
+const TEST_EVENTS = false;
 function rollEvents(){
   const w = G.wave, spots = [];
   if (TEST_EVENTS) {
