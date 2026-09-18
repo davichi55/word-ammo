@@ -375,7 +375,7 @@ function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
 function openBackpack(){
   if (!player.hasGun || G.over) return;
   G.backpackOpen = true; G.timeScale = .15; SFX.open();
-  $("#backpack").hidden = false; $("#vignette").classList.add("slow"); $("#clickToPlay").hidden = true; $("#bpGrid").scrollTop = 0;
+  $("#backpack").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow"); $("#clickToPlay").hidden = true; $("#bpGrid").scrollTop = 0;
   // start on the tab of the current loaded word, or keep the last tab
   renderBackpack();
   document.exitPointerLock && document.exitPointerLock();
@@ -1012,7 +1012,7 @@ function nearestInteract(){
 function openPanel(kind, head){
   G.noteOpen = true; G.panel = kind; G.timeScale = .15; document.exitPointerLock && document.exitPointerLock();
   $("#note .nHead").textContent = head; $("#noteClose").hidden = kind !== "picker" && kind !== "shop"; $("#noteClose").textContent = "닫기 · Close (Esc)";
-  $("#note").hidden = false; $("#vignette").classList.add("slow");
+  $("#note").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow");
 }
 function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = null; $("#note").hidden = true; $("#vignette").classList.remove("slow"); lock(); }
 function knownQuestion(){
@@ -1498,7 +1498,10 @@ function startGame(tutorial, mode = "district"){
   if (G.coop) coopBegin();
   lock();
 }
-function pauseGame(){ G.paused = true; $("#pause").hidden = false; $("#clickToPlay").hidden = true; document.exitPointerLock && document.exitPointerLock(); }
+// co-op fortress never freezes or slows the world: menus/panels only cover your own screen
+const liveCoop = () => !!(G.coop && G.mode === "fortress");
+function pauseGame(){ G.paused = true; G.firing = false; for (const k in keys) keys[k] = false;
+  $("#pauseCoop").hidden = !liveCoop(); $("#pause").hidden = false; $("#clickToPlay").hidden = true; document.exitPointerLock && document.exitPointerLock(); }
 function resumeGame(){ G.paused = false; $("#pause").hidden = true; lock(); }
 function gameOver(){
   if (G.over) return;
@@ -1575,14 +1578,14 @@ renderMenu();
 /* ================================ update ================================ */
 const clock = new THREE.Clock();
 function update(rdt){
-  const dt = rdt * G.timeScale;
+  const dt = rdt * (liveCoop() ? 1 : G.timeScale);
   G.time += dt;
   world.update(G.time, rdt, player.pos.x, player.pos.z);
   pedestal.rotation.y += rdt * .8; pedGun.position.y = 1.25 + Math.sin(G.time * 2) * .08;
-  if (!G.running || G.paused) return;
+  if (!G.running || (G.paused && !liveCoop())) return;
 
   // ---- player movement (real time, not slowed: you can still reposition while the backpack is open? no — frozen) ----
-  if (!G.backpackOpen && !G.noteOpen && !player.downed) {   // no walking while a panel is open or you're down
+  if (!G.backpackOpen && !G.noteOpen && !player.downed && !G.paused) {   // no walking while a panel is open or you're down
     const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw)), r = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
     const want = new THREE.Vector3();
     if (keys.KeyW) want.add(f); if (keys.KeyS) want.sub(f); if (keys.KeyD) want.add(r); if (keys.KeyA) want.sub(r);
