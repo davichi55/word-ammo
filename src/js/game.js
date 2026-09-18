@@ -230,7 +230,7 @@ function fire(){
   if (h && h.dog) { SFX.shot(); if (isClient()) { coopAct({ a: "hound", i: G.dogs.indexOf(h.dog) }); floater(h.point, "🐕", "#ffd23f", 22); } else hitHound(h.dog, h.point); tracer(from, h.point, 0xffd23f); hitmarker(false); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return; }
   if (h) {
     to = h.point;
-    const a = h.alien, good = a.special || G.loaded.id === a.word.id;
+    const a = h.alien, good = (a.special && !a.locks) || G.loaded.id === a.word.id;   // a locked heist boss needs its lock's word
     if (isClient()) {   // co-op client: show the hit now, let the host apply it
       coopAct({ a: "shot", id: a.id, head: h.head ? 1 : 0, w: G.loaded.id });
       if (good) { SFX.shotGood(); burst(h.point, 0x7cf7d4, 26, 6); hitmarker(true); floater(h.point, h.head ? "💥" : "✓", "#7cf7d4", 26); }
@@ -238,6 +238,7 @@ function fire(){
       tracer(from, to, good ? 0x7cf7d4 : 0xb8b0ff, true); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return;
     }
     G.wakeAlien(a);
+    if (a.locks) { bossLockHit(a, h.point, good); tracer(from, h.point, good ? 0x7cf7d4 : 0xb8b0ff); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return; }
     if (a.firstShotWrong === null) a.firstShotWrong = !good;
     if (good) {
       SFX.shotGood(); const dmg = h.head ? 55 : 36; a.stagger = a.special ? .08 : .3;
@@ -253,7 +254,8 @@ function fire(){
       }
     } else {
       SFX.shot(); SFX.resist(); a.damage(2); a.wrongHits++;
-      burst(h.point, 0x9a93c2, 10, 3); hitmarker(false); floater(h.point, a.word.kr, "#ffcf5c", 30, 1.8, "w" + a.id);   // wrong ammo shows the word it IS weak to
+      // wrong ammo shows the word it IS weak to — a disguised alien only gives it away after 3 misses (recall first!)
+      burst(h.point, 0x9a93c2, 10, 3); hitmarker(false); floater(h.point, a.disguised && a.wrongHits < 3 ? "✗" : a.word.kr, "#ffcf5c", 30, 1.8, "w" + a.id);
       if (!a.announced && !(G.tut && G.tut.step === "shoot") && !shirtMode()) announce(a);
       if (G.tut && G.tut.step === "shoot") tutNext("listen");
     }
@@ -365,7 +367,7 @@ function objective(html){ $("#objective").innerHTML = html; }
 function objectiveFlash(html){ const prev = $("#objective").innerHTML; objective(html); clearTimeout(objTimer); objTimer = setTimeout(() => { if ($("#objective").innerHTML === html) objective(G.tut ? G.tut.text : prev); }, 2000); }
 
 /* ================================ HUD ================================ */
-function renderHP(){ $("#hpFill").style.width = (G.mode === "heist" && G.heist ? Math.max(0, G.heist.hp / G.heist.max * 100) : player.hp) + "%"; }   // heist: the bar is the loot
+function renderHP(){ $("#hpFill").style.width = (G.mode === "heist" && G.heist ? Math.min(100, G.coins / 10) : player.hp) + "%"; }   // heist: the bar is the loot pile (full at 💰1000)
 function renderAmmo(){
   const w = G.loaded;
   $("#loadedWord").textContent = w ? (settings.labels === "ko" ? w.kr : meaning(w)) : "—";
@@ -379,8 +381,9 @@ function renderQuick(){
 function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
 function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
   if (G.mode === "heist" && G.heist) {
-    $("#waveLbl").textContent = `🏦 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
-    $("#scoreLbl").textContent = `💰 LOOT ${Math.max(0, Math.ceil(G.heist.hp / G.heist.max * 100))}% · 🔐 ${G.heist.cracked}`; return; }
+    const off = fort.towers.filter(t => t.offline).length;
+    $("#waveLbl").textContent = `🏦 Wave ${G.wave} · ${G.bossOut ? bossLocksLbl() : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 🎒 ${G.unlocked.length}/${G.pool.length} words${off ? ` · 📻 ${off} offline` : ""}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
+    $("#scoreLbl").textContent = `💰 LOOT ${G.coins} · 🔐 ${G.heist.cracked}`; return; }
   if (G.mode === "fortress") { const z = world.zones[G.zone];
     $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
   if (G.mode === "escape") { const cp = world.route[Math.min(G.cp, world.route.length - 1)];
@@ -508,7 +511,7 @@ addEventListener("keydown", e => {
   if (k === "KeyE" && G.mode === "heist" && G.interact) { heistUse(G.interact); return; }
   if (k === "KeyE" && G.mode === "fortress" && G.interact && G.interact.kind !== "revive" && !player.downed) { const it = G.interact; if (it.kind === "pad") towerQuiz(it.o); else if (it.kind === "tower") towerPicker(it.o); else if (it.kind === "event") useEvent(it.o); else openShop(); return; }
   if (k === "KeyF") nukeWord();
-  if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a) announce(a, true); }
+  if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a && a.disguised) objectiveFlash("🥷 변장한 외계인은 힌트 없어요 · No hints for a disguised alien — recall it!"); else if (a) announce(a, true); }
   if (shirtMode()) { const n = /^Digit([1-9])$/.exec(k); if (n) { const w = ammoWords()[+n[1] - 1]; if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); } if (n) return; }
   const d = /^Digit([1-4])$/.exec(k);
   if (d && G.recentLoads && G.recentLoads[+d[1] - 1]) { const w = D.words.find(x => x.id === G.recentLoads[+d[1] - 1]); if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); }
@@ -706,7 +709,7 @@ function escapeTick(dt, rdt){
 }
 function spawnAlienShirt(pos, w, opt){
   const f = world.freeSpot(pos.x, pos.z); pos.x = f.x; pos.z = f.z; pos.y = world.groundY(pos.x, pos.z);
-  const a = new Alien(scene, pos, w, { ...opt, shirt: w.kr }); a.id = Math.random().toString(36).slice(2); G.aliens.push(a); return a;
+  const a = new Alien(scene, pos, w, { ...opt, shirt: opt.shirtText || w.kr }); a.id = Math.random().toString(36).slice(2); G.aliens.push(a); return a;
 }
 function nextNewWord(){
   const own = new Set(G.unlocked.map(w => w.id)), cands = G.pool.filter(w => !own.has(w.id));
@@ -1006,12 +1009,12 @@ function companionsTick(dt){
 }
 function towersTick(dt){
   for (const t of fort.towers) {
-    if (t.broken) continue;   // heist: smashed towers wait for a repair quiz
+    if (t.broken || t.offline) continue;   // heist: smashed towers wait for a repair quiz, offline ones for tuning
     const lv = t.lvl || 0;
     t.crystal.rotation.y += dt * 2; t.cd -= dt;
     if (t.cd > 0) continue;
     let best = null, bd = 22 + 3 * lv;
-    for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || !(a.special || (a.word && a.word.id === t.word.id))) continue;
+    for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || a.disguised || a.locks || !(a.special || (a.word && a.word.id === t.word.id))) continue;   // towers can't read a meaning or open a lock
       const d = a.pos.distanceTo(t.crystalPos); if (d < bd && world.losClear(t.crystalPos, a.aimPoint())) { bd = d; best = a; } }
     // no enemy with this tower's word in range: the crystal dims — time to change its word?
     t.glow.material.opacity = best ? .7 : .15; t.crystal.material.color.setHex(best ? 0x7cf7d4 : 0x3a6a60);
@@ -1034,7 +1037,7 @@ function nearestInteract(){
   return null;
 }
 // ---- panels on the paper (#note): tower quiz, tower word picker, shop. The world slows, it doesn't stop. ----
-const CLOSABLE = new Set(["picker", "shop", "htower"]), EXITABLE = new Set(["towerquiz", "hbuild", "hfix", "safe", "lootfix"]);
+const CLOSABLE = new Set(["picker", "shop", "htower"]), EXITABLE = new Set(["towerquiz", "hbuild", "hfix", "htune", "safe"]);
 function openPanel(kind, head){
   G.noteOpen = true; G.panel = kind; G.timeScale = G.mode === "heist" ? .3 : .15; document.exitPointerLock && document.exitPointerLock();
   $("#note .nHead").textContent = head; $("#noteClose").hidden = !CLOSABLE.has(kind) && !EXITABLE.has(kind); $("#noteClose").textContent = EXITABLE.has(kind) ? "나가기 · Exit (Esc / Q)" : "닫기 · Close (Esc)";
@@ -1044,8 +1047,8 @@ function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = 
   // Esc can't re-capture the mouse (browsers ignore it as a click): show "click to play" instead of leaving you stuck
   setTimeout(() => { if (document.pointerLockElement !== renderer.domElement && G.running && !G.paused && !G.over && !G.noteOpen && !G.backpackOpen) $("#clickToPlay").hidden = false; }, 200); }
 const justClosed = () => performance.now() - (G.panelClosedAt || 0) < 600;
-function knownQuestion(w0){   // one question about a word you own (w0, or a random one)
-  const known = G.unlocked, w = w0 || pick(known), kind = pick(["mean", "kr", "pos"]);
+function knownQuestion(w0, kinds = ["mean", "kr", "pos"]){   // one question about a word you own (w0, or a random one)
+  const known = G.unlocked, w = w0 || pick(known), kind = pick(kinds);
   if (kind === "mean") { const wrong = distinct(G.pool.filter(x => x.pos === w.pos), 3, meaning, [w]); while (wrong.length < 3) wrong.push(...distinct(G.pool, 3 - wrong.length, meaning, [w, ...wrong]));
     return { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }; }
   if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
@@ -1240,16 +1243,20 @@ function victory(){
 
 /* ================================ 🏦 heist ================================ */
 // You robbed the bank and hold its courtyard on the hill. You can't get hurt: the aliens want the 💰 loot.
-// Every wave brings 4 NEW words — they're your ammo (keys 1–4) and the words on the aliens' shirts.
-// Quizzes are the main thing you do, and they ask about EVERY word you've learned:
-//   🔨 pad → build a tower · 💥 broken tower → repair · 🔐 safe → money (tower upgrades) · 💰 loot → patch it up.
+// The loot IS your money: aliens that reach it steal coins, upgrades are paid from it, and an alien hitting an
+// empty pile ends the run. Every wave brings 4 NEW words, and the game makes you use them:
+//   📻 every tower goes offline at a new wave until you tune it with a question about ITS new word,
+//   🥷 disguised aliens wear the MEANING — towers can't read it, only your gun with the right Korean word works,
+//   👑 the boss has 4 locks, one per new word (its meaning, or only its sound): shoot each with that word.
+// Other quizzes (3 q) ask about every word you've learned: 🔨 build · 💥 repair · 🔐 safe → money.
+const START_LOOT = 300;
 const safeReward = () => 60 + 15 * G.wave;
-const LOOT_FIX = 150;
+const disguiseChance = () => Math.min(.5, .2 + .03 * (G.wave - 1));
 function heistStart(){
   const W = world;
-  G.heist = { hp: 1000, max: 1000, safes: [], safeT: 0, stolen: 0, cracked: 0, nextWaveT: 0, lastHit: -99, lastWarn: -99,
+  G.coins = START_LOOT;
+  G.heist = { safes: [], safeT: 0, stolen: 0, lost: 0, cracked: 0, nextWaveT: 0, lastHit: -99, lastWarn: -99,
     lootTgt: { pos: new THREE.Vector3(W.loot.x, W.loot.y + 1.7, W.loot.z), feet: W.loot.y, loot: true } };
-  W.loot.pieces.forEach(p => p.visible = true);
   for (const [x, z] of W.pads) addPad(x, z);
   for (let i = 0; i < 3; i++) spawnSafe();
   heistWave();
@@ -1257,24 +1264,28 @@ function heistStart(){
 function heistWave(){
   const fresh = [];
   for (let i = 0; i < 4; i++) { const w = nextNewWord(); if (!w) break; G.unlocked.push(w); G.newIds.add(w.id); markKill(w); fresh.push(w); }
-  if (!fresh.length) { G.won = true; say([lineClip("clear")]); gameOver(); return; }   // every word stolen
+  if (!fresh.length) { G.won = true; say([lineClip("clear")]); gameOver(); return; }   // every word stolen: you get away
   G.wave++; G.waveWords = fresh; loadWord(fresh[0]); renderQuick();
   G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.waveSize = 14 + 2 * G.wave; G.calmT = 15; G.lastCalm = -1; G.spawnT = 3;
-  // towers: fully healed (broken ones stay broken) and spread over the new words
-  fort.towers.forEach((t, i) => { t.word = fresh[i % fresh.length]; if (!t.broken) t.hp = t.maxHp; towerSign(t); });
+  // towers: healed (broken ones stay broken), spread over the new words, and OFFLINE until tuned
+  fort.towers.forEach((t, i) => { t.word = fresh[i % fresh.length]; if (!t.broken) { t.hp = t.maxHp; t.offline = true; } towerState(t); });
   openBrief(fresh); renderTop(); renderHP();
 }
 function openBrief(words){
   Q = null; openPanel("brief", `🏦 Wave ${G.wave} — 새 단어 · ${words.length} new words`); G.timeScale = 0;
   $("#noteBody").innerHTML = `<div class="brief">${words.map((w, i) => `<div class="bRow"><span class="k">${i + 1}</span><b>${esc(w.kr)}</b><button data-say="${w.id}">🔊</button><span class="m">${esc(meaning(w))}</span><small>${POS_KO[w.pos] || ""} · ${CAT[w.cat].icon}</small></div>`).join("")}</div>
-    <div class="nHint">이번 웨이브의 탄창이에요 (키 1–4). 퀴즈는 지금까지 배운 모든 단어에서 나와요 · This wave's ammo (keys 1–4) — the aliens wear these words. Quizzes ask about every word you've learned.</div>`;
+    <div class="nHint">잘 외우세요! 이 단어들이 이번 웨이브의 탄창이에요 (키 1–4). · Learn these — they're this wave's ammo (keys 1–4).<br>
+    📻 탑은 새 단어 문제로 켜져요 · Towers are offline until you tune them with a question about their new word.<br>
+    🥷 뜻을 입은 외계인은 탑이 못 쏴요 · Aliens wearing the <b>meaning</b>: only your gun, loaded with the right Korean word.<br>
+    👑 보스의 자물쇠 4개 = 새 단어 4개 · The boss has 4 locks — one per new word.</div>`;
   $("#noteClose").hidden = false; $("#noteClose").textContent = "시작 · Start (E)";
   say(words.map(w => wordClip(w.id)));
 }
 function closeBrief(){
   closePanel();
-  objective(`🏦 Wave ${G.wave}: ${G.waveSize} aliens, then the boss 👑 · 🔨 build towers · 🔐 crack safes for 💰 · guard the loot`);
-  setTimeout(() => { if (G.mode === "heist" && G.running && G.panel !== "brief") objective(""); }, 7000);
+  const off = fort.towers.filter(t => t.offline).length;
+  objective(`🏦 Wave ${G.wave}: ${G.waveSize} aliens, then the boss 👑${off ? ` · 📻 ${off} tower${off > 1 ? "s" : ""} offline — E to tune` : ""} · 🔐 safes = 💰`);
+  setTimeout(() => { if (G.mode === "heist" && G.running && G.panel !== "brief") objective(""); }, 8000);
 }
 // ---- safes ----
 function spawnSafe(){
@@ -1296,43 +1307,56 @@ function spawnSafe(){
 function crackSafe(sf){
   const H = G.heist, r = safeReward(); G.coins += r; H.stolen += r; H.cracked++; sf.openT = 0; H.safeT = Math.min(H.safeT, 6);
   SFX.pickup(); burst(new THREE.Vector3(sf.x, sf.y + 1, sf.z), 0xffcf5c, 70, 7); floater(new THREE.Vector3(sf.x, sf.y + 1.8, sf.z), `+💰${r}`, "#ffcf5c", 34, 1.6);
-  objectiveFlash(`🔐 금고를 털었어요! · Safe cracked: <b>+💰${r}</b> — spend it on tower upgrades (E at a tower)`); renderTop();
+  objectiveFlash(`🔐 금고를 털었어요! · Safe cracked: <b>+💰${r}</b> — it goes on the loot pile`); renderTop(); renderHP();
 }
-// ---- towers ----
+// ---- towers: online / 📻 offline (needs tuning) / 💥 broken (needs a repair quiz) ----
 function towerSign(t){
   const old = t.sign.material.map;
-  t.sign.material.map = t.broken ? signTexture("💥 E", "수리 · repair") : signTexture(t.word.kr, `Lv ${(t.lvl || 0) + 1} · E`); t.sign.material.needsUpdate = true;
+  t.sign.material.map = t.broken ? signTexture("💥 E", "수리 · repair") : t.offline ? signTexture("📻 E", "조율 · tune") : signTexture(t.word.kr, `Lv ${(t.lvl || 0) + 1} · E`);
+  t.sign.material.needsUpdate = true;
   if (old && old !== t.sign.material.map) old.dispose();
+}
+function towerState(t){
+  t.crystal.visible = !t.broken; t.glow.visible = !t.broken && !t.offline; t.g.rotation.z = t.broken ? .32 : 0;
+  if (t.offline) t.crystal.material.color.setHex(0x3a3a48);
+  towerSign(t);
 }
 function heistBuildTower(pad){
   const w = G.loaded && G.waveWords.includes(G.loaded) ? G.loaded : G.waveWords[fort.towers.length % G.waveWords.length];
-  const t = buildTower(pad, w); Object.assign(t, { lvl: 0, maxHp: 120, hp: 120, broken: false, tgt: { pos: new THREE.Vector3(t.x, t.y + 1.7, t.z), feet: t.y, tower: t } });
-  towerSign(t); objectiveFlash(`🗼 탑 완성! · Tower built — it shoots <b>${esc(w.kr)}</b>. E at the tower: change its word or upgrade it (💰)`);
+  const t = buildTower(pad, w); Object.assign(t, { lvl: 0, maxHp: 120, hp: 120, broken: false, offline: false, tgt: { pos: new THREE.Vector3(t.x, t.y + 1.7, t.z), feet: t.y, tower: t } });
+  towerState(t); objectiveFlash(`🗼 탑 완성! · Tower built — it shoots <b>${esc(w.kr)}</b>. E at the tower: change its word or upgrade it (💰)`);
   return t;
 }
 function breakTower(t){
-  t.broken = true; t.hp = 0; t.crystal.visible = false; t.glow.visible = false; t.g.rotation.z = .32; towerSign(t);
+  t.broken = true; t.offline = false; t.hp = 0; towerState(t);
   SFX.slam(); burst(t.crystalPos.clone(), 0x8a8aa0, 50, 6); objectiveFlash("💥 탑이 부서졌어요! · A tower was smashed — E at it to repair (quiz)");
 }
 function repairTower(t){
-  t.broken = false; t.hp = t.maxHp; t.crystal.visible = true; t.glow.visible = true; t.g.rotation.z = 0; towerSign(t);
+  t.broken = false; t.offline = false; t.hp = t.maxHp; towerState(t);
   SFX.pickup(); burst(t.crystalPos.clone(), 0x7cf7d4, 50, 6); objectiveFlash("🗼 수리 완료! · Tower repaired");
+}
+function tuneTower(t){
+  t.offline = false; towerState(t); SFX.pickup(); burst(t.crystalPos.clone(), 0x7cf7d4, 40, 6);
+  const left = fort.towers.filter(x => x.offline).length;
+  objectiveFlash(`📻 조율 완료! · Tuned — it shoots <b>${esc(t.word.kr)}</b>${left ? ` · ${left} still offline` : ""}`);
 }
 const towerUpCost = t => 100 + 60 * t.lvl;
 function openTowerPanel(t){ openPanel("htower", "🗼 탑 · Tower"); G.pickerTower = t; renderTowerPanel(); }
 function renderTowerPanel(){
   const t = G.pickerTower, max = t.lvl >= 3;
   $("#noteBody").innerHTML = `<div class="qHead">🗼 Lv ${t.lvl + 1}${max ? " (MAX)" : ""} · HP ${Math.ceil(t.hp)}/${t.maxHp} · 💰 ${G.coins}</div>
-    <div class="qPrompt">쏠 단어 · <small>Which word should it shoot?</small></div>
+    <div class="qPrompt">쏠 단어 · <small>Which word should it shoot? (a new word = a new tuning question)</small></div>
     <div class="qOpts">${G.waveWords.map((w, i) => `<button data-hword="${i}" class="${w.id === t.word.id ? "right" : ""}"><span class="k">${i + 1}</span>${esc(w.kr)}</button>`).join("")}</div>
-    <div class="shop" style="margin-top:10px"><button data-hup="1" ${max ? "disabled" : ""}><span class="k">5</span><b>강화 · Upgrade</b> <small>+40% damage · +3 m range · shoots faster · +60 HP</small><span class="c">${max ? "MAX" : "💰 " + towerUpCost(t)}</span></button></div>`;
+    <div class="shop" style="margin-top:10px"><button data-hup="1" ${max ? "disabled" : ""}><span class="k">5</span><b>강화 · Upgrade</b> <small>+40% damage · +3 m range · shoots faster · +60 HP — paid from the loot</small><span class="c">${max ? "MAX" : "💰 " + towerUpCost(t)}</span></button></div>`;
 }
 function htowerKey(n){
   const t = G.pickerTower; if (!t) return;
-  if (n <= 4) { const w = G.waveWords[n - 1]; if (w) { t.word = w; towerSign(t); SFX.select(); renderTowerPanel(); } return; }
+  if (n <= 4) { const w = G.waveWords[n - 1]; if (!w || w === t.word) return;
+    t.word = w; t.offline = true; towerState(t); closePanel(); heistUse({ kind: "htune", o: t }); return; }   // a new word must be tuned in
   if (t.lvl >= 3) return;
   const c = towerUpCost(t); if (G.coins < c) { SFX.empty(); objectiveFlash("💰 돈이 부족해요 · Not enough money — crack a safe 🔐"); return; }
-  G.coins -= c; t.lvl++; t.maxHp += 60; t.hp = t.maxHp; SFX.pickup(); burst(t.crystalPos.clone(), 0xffcf5c, 40, 6); towerSign(t); renderTowerPanel(); renderTop();
+  G.coins -= c; t.lvl++; t.maxHp += 60; t.hp = t.maxHp; SFX.pickup(); burst(t.crystalPos.clone(), 0xffcf5c, 40, 6); towerSign(t); renderTowerPanel(); renderTop(); renderHP();
+  if (G.coins < 100) objectiveFlash("⚠️ 전리품이 얼마 안 남았어요 · Your loot pile is low — an alien hitting an empty pile ends the heist");
 }
 // ---- quizzes: half about this wave's new words, the rest about older words (struggled-with ones first) ----
 function heistQuestions(n){
@@ -1347,34 +1371,34 @@ function heistQuestions(n){
   }
   return out;
 }
-function heistQuiz(kind, head, n, onPass){
+function heistQuiz(kind, head, nOrQs, onPass){
   openPanel(kind, head);
-  Q = { qs: heistQuestions(n), i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel(); onPass(); } };
+  Q = { qs: Array.isArray(nOrQs) ? nOrQs : heistQuestions(nOrQs), i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel(); onPass(); } };
   renderQuiz();
 }
 function heistUse(it){
-  const H = G.heist, o = it.o;
+  const o = it.o;
   if (it.kind === "hbuild") heistQuiz("hbuild", "🔨 탑 짓기 퀴즈 · Build quiz", 3, () => { if (fort.pads.includes(o)) heistBuildTower(o); });
   else if (it.kind === "hfix") heistQuiz("hfix", "💥 탑 수리 퀴즈 · Repair quiz", 2, () => { if (o.broken) repairTower(o); });
+  else if (it.kind === "htune") heistQuiz("htune", `📻 탑 조율 · Tune the tower`, [knownQuestion(o.word, ["mean", "kr"])], () => { if (o.offline && !o.broken) tuneTower(o); });
   else if (it.kind === "safe") heistQuiz("safe", `🔐 금고 털기 · Crack the safe (+💰${safeReward()})`, 3, () => { if (o.openT == null) crackSafe(o); });
-  else if (it.kind === "lootfix") heistQuiz("lootfix", "💰 전리품 지키기 · Patch up the loot", 2, () => { H.hp = Math.min(H.max, H.hp + LOOT_FIX); renderHP(); SFX.heal(); objectiveFlash(`💰 +${LOOT_FIX} loot`); });
   else if (it.kind === "htower") openTowerPanel(o);
 }
 function heistInteract(){
   const H = G.heist, near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
   for (const t of fort.towers) if (near(t, 2.6)) return t.broken ? { kind: "hfix", o: t, label: "E · 💥 탑 수리 — 퀴즈 · repair the tower (quiz)" }
+    : t.offline ? { kind: "htune", o: t, label: "E · 📻 탑 조율 — 새 단어 문제 1개 · tune the tower (1 question about its new word)" }
     : { kind: "htower", o: t, label: `E · 🗼 Lv ${t.lvl + 1} · ${esc(t.word.kr)} · HP ${Math.ceil(t.hp)}/${t.maxHp} — 단어 / 강화 · word & upgrade` };
   for (const p of fort.pads) if (near(p, 2.2)) return { kind: "hbuild", o: p, label: "E · 🔨 탑 짓기 — 퀴즈 · build a tower (quiz)" };
   for (const sf of H.safes) if (sf.openT == null && near(sf, 2.4)) return { kind: "safe", o: sf, label: `E · 🔐 금고 털기 — 퀴즈 · crack the safe (quiz) · 💰${safeReward()}` };
-  if (H.hp < H.max && near(world.loot, 4.2)) return { kind: "lootfix", o: world.loot, label: `E · 💰 전리품 지키기 — 퀴즈 · patch up the loot (+${LOOT_FIX})` };
   return null;
 }
-// ---- the aliens: go for a tower that's in their way, else the loot ----
+// ---- the aliens: go for a tower that's in their way (disguised ones hunt towers), else the loot ----
 function heistTarget(a){
   const H = G.heist; if (!H) return player;
   if (a.htgt && G.time < (a.htgtUntil || 0) && !(a.htgt.tower && a.htgt.tower.broken)) return a.htgt;
-  let best = H.lootTgt, bd = 9;   // a tower within 9 m of an alien draws it off the loot
-  for (const t of fort.towers) { if (t.broken || !t.tgt) continue; const d = Math.hypot(t.x - a.pos.x, t.z - a.pos.z); if (d < bd && Math.abs(t.y - a.pos.y) < 1.5) { bd = d; best = t.tgt; } }
+  let best = H.lootTgt, bd = a.disguised ? 30 : 9;   // a tower within 9 m draws an alien off the loot; disguised ones go looking for towers
+  for (const t of fort.towers) { if (t.broken || !t.tgt) continue; const d = Math.hypot(t.x - a.pos.x, t.z - a.pos.z); if (d < bd && (a.disguised || Math.abs(t.y - a.pos.y) < 1.5)) { bd = d; best = t.tgt; } }
   a.htgt = best; a.htgtUntil = G.time + .5; return best;
 }
 function heistSlam(center, r, a){
@@ -1386,10 +1410,39 @@ function heistSlam(center, r, a){
     t.hp -= boss ? 45 : 25; floater(t.crystalPos.clone(), boss ? "-45" : "-25", "#ff4d6d", 22, .8, "tw" + fort.towers.indexOf(t));
     if (t.hp <= 0) breakTower(t); return; }
   if (Math.hypot(world.loot.x - center.x, world.loot.z - center.z) > r + 2.4) return;
-  H.hp -= boss ? 60 : 20; H.lastHit = G.time; renderHP();
+  // the loot is your money: they grab coins; an empty pile = they got it all
+  if (G.coins <= 0) { G.coins = 0; renderHP(); gameOver(); return; }
+  const steal = Math.min(G.coins, boss ? 50 : 15); G.coins -= steal; H.lost += steal; H.lastHit = G.time; renderHP(); renderTop();
   burst(new THREE.Vector3(world.loot.x, world.loot.y + 1.2, world.loot.z), 0xffcf5c, 24, 5);
-  if (G.time - H.lastWarn > 8) { H.lastWarn = G.time; objectiveFlash("🚨 전리품이 공격받고 있어요! · The loot is under attack!"); }
-  if (H.hp <= 0) { H.hp = 0; renderHP(); gameOver(); }
+  floater(new THREE.Vector3(world.loot.x, world.loot.y + 2.4, world.loot.z), `-💰${steal}`, "#ff8a5c", 26, 1, "loot");
+  if (G.time - H.lastWarn > 8) { H.lastWarn = G.time; objectiveFlash(G.coins < 100 ? "🚨 전리품이 거의 없어요! · The pile is almost empty — one more hit on an empty pile ends the heist!" : "🚨 전리품을 훔쳐 가요! · They're stealing from the loot!"); }
+}
+// ---- the boss: 4 locks, one per new word — its meaning or only its sound. 3 hits with that word open a lock. ----
+function setLockClue(a){
+  const L = a.locks[a.lockI]; a.word = L.w; a.announced = false;
+  a.setShirt(L.audio ? "🔊 ?" : meaning(L.w));
+  if (L.audio) { say([wordClip(L.w.id)], { interrupt: true }); a.nextSay = G.time + 6; }
+}
+function spawnHeistBoss(){
+  G.bossOut = true; const [ex, ez] = pick(world.entries), f = world.freeSpot(ex, ez);
+  const locks = shuffleA(G.waveWords).map((w, i) => ({ w, hits: 0, audio: i % 2 === 1, done: false, missed: false }));
+  const a = new Alien(scene, new THREE.Vector3(f.x, world.groundY(f.x, f.z), f.z), locks[0].w, { rise: true, special: true, shirt: "?", hp: 1e9, speed: 1.15, skills: { orb: false, slam: true } });
+  a.id = "boss" + G.wave; a.locks = locks; a.lockI = 0; G.aliens.push(a); setLockClue(a);
+  objective(`👑 보스 등장! · The <b>boss</b> has ${locks.length} locks — each shows a new word's <b>meaning</b> or only its 🔊 <b>sound</b> (Q = hear again). Shoot it 3× with that word. Wrong word = the lock heals.`);
+  setTimeout(() => { if (G.mode === "heist" && G.running && G.bossOut) objective(""); }, 9000);
+  SFX.charge(); renderTop();
+}
+function bossLockHit(a, point, good){
+  const L = a.locks[a.lockI];
+  if (!good) { SFX.shot(); SFX.resist(); L.hits = Math.max(0, L.hits - 1); if (!L.missed) { L.missed = true; mark(L.w, false); }
+    hitmarker(false); burst(point, 0x9a93c2, 10, 3); floater(point, `✗ 🔒 ${L.hits}/3`, "#ff8a8a", 26, .9, "lock"); return; }
+  SFX.shotGood(); L.hits++; a.stagger = .08; burst(point, 0x7cf7d4, 20, 5); hitmarker(true); floater(point, `🔓 ${L.hits}/3`, "#7cf7d4", 28, .9, "lock");
+  if (L.hits < 3) return;
+  L.done = true; if (!L.missed) mark(L.w, true); SFX.pickup(); burst(a.aimPoint(), 0xffcf5c, 80, 10);
+  killfeed(`🔓 <b>${esc(L.w.kr)}</b> = ${esc(meaning(L.w))}`);
+  a.lockI++;
+  if (a.lockI >= a.locks.length) { a.damage(1e10); onKill(a); return; }
+  setLockClue(a); objectiveFlash(`🔓 자물쇠 ${a.lockI}/${a.locks.length} — 다음 · next lock`); renderTop();
 }
 function heistBossKill(a){
   const H = G.heist; G.shake = 1.2; SFX.slam(); SFX.kill();
@@ -1397,13 +1450,15 @@ function heistBossKill(a){
   for (let i = 0; i < 4; i++) burst(a.aimPoint(), [0xffcf5c, 0xffffff, 0xff8a3a, 0x7cf7d4][i], 120, 16 + i * 4);
   for (const o of G.aliens) if (!o.dead && o !== a) { burst(o.aimPoint(), 0xffcf5c, 30, 7); o.die(); G.kills++; G.score += 50; }
   G.coins += 100; H.stolen += 100; G.bossOut = false; H.nextWaveT = 3;
-  objective("💥 보스 처치! +💰100 · Boss down — 4 new words are coming"); renderTop();
+  objective("💥 보스 처치! +💰100 · Boss down — 4 new words are coming"); renderTop(); renderHP();
 }
+const bossLocksLbl = () => { const b = G.aliens.find(a => a.locks && !a.dead); return b ? "👑 " + b.locks.map(l => l.done ? "🔓" : "🔒").join("") : "👑 BOSS"; };
 function heistTick(dt, rdt){
   if (G.mode !== "heist" || G.over || !G.heist) return;
   const H = G.heist, L = world.loot;
   towersTick(dt);
   for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
+  for (const t of fort.towers) if (t.offline) t.sign.position.y = 5 + Math.sin(G.time * 5) * .12;   // offline towers bounce their sign
   // safes: bobbing sign; a cracked one swings open, then disappears; new ones turn up (3 at a time)
   for (const sf of H.safes) {
     if (sf.openT == null) { sf.sign.position.y = 2.2 + Math.sin(G.time * 2 + sf.x) * .1; continue; }
@@ -1411,14 +1466,19 @@ function heistTick(dt, rdt){
     if (sf.openT > 2.5) { scene.remove(sf.g); sf.gone = true; } }
   H.safes = H.safes.filter(sf => !sf.gone);
   if (H.safes.filter(sf => sf.openT == null).length < 3) { H.safeT -= dt; if (H.safeT <= 0) { spawnSafe(); H.safeT = 12; } }
-  // the loot pile shrinks as it takes damage
-  const keep = Math.ceil(H.hp / H.max * L.pieces.length); L.pieces.forEach((p, i) => p.visible = i < keep);
+  // the loot pile = your money (full at 💰1000)
+  const keep = Math.ceil(Math.min(1, G.coins / 1000) * L.pieces.length); L.pieces.forEach((p, i) => p.visible = i < keep);
+  // the boss's sound lock repeats its word
+  const B = G.aliens.find(a => a.locks && !a.dead);
+  if (B && B.locks[B.lockI].audio && G.time > (B.nextSay || 0) && !G.noteOpen) { B.nextSay = G.time + 6; say([wordClip(B.word.id)]); }
   // interaction prompt
   const it = !G.noteOpen && !G.backpackOpen ? heistInteract() : null;
   $("#interact").hidden = !it; if (it) $("#interact").innerHTML = it.label; G.interact = it;
-  // arrow: the loot when it's under attack and you're away, else the nearest safe
+  // arrow: the loot when it's being robbed and you're away, else an offline tower, else the nearest safe
   let tgt = null;
+  const off = fort.towers.find(t => t.offline && Math.hypot(t.x - player.pos.x, t.z - player.pos.z) > 3);
   if (G.time - H.lastHit < 3 && Math.hypot(L.x - player.pos.x, L.z - player.pos.z) > 12) tgt = { x: L.x, z: L.z, label: "🚨 전리품 · the loot" };
+  else if (off && !fort.towers.some(t => t.offline && Math.hypot(t.x - player.pos.x, t.z - player.pos.z) <= 3)) tgt = { x: off.x, z: off.z, label: "📻 탑 조율 · tune a tower" };
   else { let bd = 1e9; for (const sf of H.safes) { if (sf.openT != null) continue; const d = Math.hypot(sf.x - player.pos.x, sf.z - player.pos.z); if (d < bd) { bd = d; tgt = d > 6 ? { x: sf.x, z: sf.z, label: "🔐 금고 · safe" } : null; } } }
   $("#radar").hidden = !tgt || G.backpackOpen || G.noteOpen;
   if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
@@ -1427,18 +1487,15 @@ function heistTick(dt, rdt){
   // waves
   if (H.nextWaveT > 0) { H.nextWaveT -= dt; if (H.nextWaveT <= 0) { if (G.noteOpen) H.nextWaveT = .2; else heistWave(); } return; }
   if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
-  if (G.waveKills >= G.waveSize && !G.bossOut) {
-    G.bossOut = true; const [ex, ez] = pick(world.entries), f = world.freeSpot(ex, ez);
-    const a = new Alien(scene, new THREE.Vector3(f.x, world.groundY(f.x, f.z), f.z), pick(G.waveWords), { rise: true, special: true, shirt: "?", hp: 500 + 120 * G.wave, speed: 1.25, skills: { orb: false, slam: true } });
-    a.id = "boss" + G.wave; G.aliens.push(a);
-    objectiveFlash("👑 보스 등장! · The <b>boss</b> is coming for the loot — any word hurts it"); SFX.charge(); renderTop();
-  }
+  if (G.waveKills >= G.waveSize && !G.bossOut) spawnHeistBoss();
   const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(22, 8 + G.wave * 2);
   G.spawnT -= dt;
   if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
     G.spawnT = Math.max(.7, 1.8 - G.wave * .07); G.waveSpawned++;
-    const [ex, ez] = pick(world.entries);
-    spawnAlienShirt(new THREE.Vector3(ex + rnd(-3, 3), 0, ez + rnd(-3, 3)), nextWeakWord(), { rise: true, speed: Math.min(2.4, rnd(1.4, 1.8) + G.wave * .04), skills: { orb: false, slam: true } });
+    const [ex, ez] = pick(world.entries), w = nextWeakWord(), dis = Math.random() < disguiseChance();
+    const a = spawnAlienShirt(new THREE.Vector3(ex + rnd(-3, 3), 0, ez + rnd(-3, 3)), w, { rise: true, shirtText: dis ? meaning(w) : null,
+      speed: Math.min(2.4, rnd(1.4, 1.8) + G.wave * .04) * (dis ? 1.1 : 1), skills: { orb: false, slam: true } });
+    a.disguised = dis;
   }
 }
 function clearHeist(){ if (G.heist) for (const sf of G.heist.safes) scene.remove(sf.g); G.heist = null; G.waveWords = []; }
@@ -1727,7 +1784,7 @@ function startGame(tutorial, mode = "district"){
     helperShow(`첫 단어: <b class="typed">${esc(w0.kr)}</b> <small>= ${esc(meaning(w0))} · walk to a 🔨 pad + E to build a tower (quiz)</small>`, 7); say([wordClip(w0.id)]); }
   else if (mode === "heist") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     heistStart();
-    helperShow("🏦 <small>You can't get hurt — guard the 💰 loot. 🔨 pads = towers, 🔐 safes = money for upgrades. Every quiz asks about all your words.</small>", 9); }
+    helperShow("🏦 <small>You can't get hurt — the 💰 loot pile is your money and your life. 🔨 pads = towers, 📻 tune them each wave, 🔐 safes = more money.</small>", 9); }
   else if (mode === "escape") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); placeBeam();
     objective(`🏃 탈출 모드 · Fight your way to the <b>cathedral altar</b> — follow the golden light. Read the word on their shirts! <small>1–9 / mouse wheel = switch word · first word: <b>${esc(w0.kr)}</b> = ${esc(meaning(w0))}</small>`);
@@ -1754,7 +1811,7 @@ function gameOver(){
   const best = store.get("wa_best", 0); if (G.score > best) store.set("wa_best", G.score);
   if (G.mode === "heist") {
     const bw = store.get("wa_best_heist", 0), cleared = G.won ? G.wave : G.wave - 1, isBest = cleared > bw; if (isBest) store.set("wa_best_heist", cleared);
-    $("#overStats").innerHTML = [[cleared, isBest ? "🏆 waves (best)" : `waves · best ${Math.max(bw, cleared)}`], [G.unlocked.length, "words learned"], ["💰 " + (G.heist ? G.heist.stolen : 0), "money stolen"], [G.heist ? G.heist.cracked : 0, "safes cracked"]].map(([b, s2]) => `<div><b>${b}</b><span>${s2}</span></div>`).join("");
+    $("#overStats").innerHTML = [[cleared, isBest ? "🏆 waves (best)" : `waves · best ${Math.max(bw, cleared)}`], [G.unlocked.length, "words learned"], ["💰 " + G.coins, G.won ? "got away with" : "left"], ["💰 " + (G.heist ? G.heist.stolen : 0), "stolen in total"]].map(([b, s2]) => `<div><b>${b}</b><span>${s2}</span></div>`).join("");
     $("#reviewList").innerHTML = G.unlocked.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${POS_KO[w.pos]}</small></div>`).join("");
   } else if (G.mode === "fortress") {
     const bw = store.get("wa_best_fort", 0), cleared = G.wave - 1, isBest = cleared > bw; if (isBest) store.set("wa_best_fort", cleared);
@@ -1932,4 +1989,4 @@ function frame(){
 drawGunScreen();
 requestAnimationFrame(frame);
 window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
-window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, heist: () => G.heist, heistWave, heistUse, heistInteract, spawnSafe, crackSafe, breakTower, repairTower, heistTarget, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
+window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, spawnHeistBoss, bossLockHit, htowerKey, heist: () => G.heist, heistWave, heistUse, heistInteract, spawnSafe, crackSafe, breakTower, repairTower, heistTarget, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };

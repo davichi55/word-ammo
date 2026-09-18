@@ -108,7 +108,7 @@ export class Alien {
       // print colour is matte (below the bloom threshold) so the word stays sharp
       for (const [z, ry] of [[.31, 0], [-.31, Math.PI]]) {
         const p = new THREE.Mesh(new THREE.PlaneGeometry(.7, .55), new THREE.MeshBasicMaterial({ map: tex, color: this.special ? 0xd8c070 : 0xbdb9b0 }));
-        p.position.set(0, 1.6, z); p.rotation.y = ry; body.add(p);
+        p.position.set(0, 1.6, z); p.rotation.y = ry; body.add(p); (this.shirtPlanes || (this.shirtPlanes = [])).push(p);
       }
       for (const s of [-1, 1]) { const sl = new THREE.Mesh(new THREE.CylinderGeometry(.1, .12, .26, 10), shirtMat); sl.position.set(s * .38, 1.9, 0); body.add(sl); }
       body2.userData.alien = this; this.hitMeshes.push(body2);
@@ -118,6 +118,7 @@ export class Alien {
     this.rise = !!opt.rise; this.spawnT = this.rise ? 0 : 1; this.baseY = pos.y;
     if (this.rise) root.position.y = this.baseY - 2.7;
   }
+  setShirt(text){ const t = shirtTexture(text, this.special); for (const p of this.shirtPlanes || []) { p.material.map = t; p.material.needsUpdate = true; } }   // heist boss: a new clue per lock
   get pos(){ return this.root.position; }
   get active(){ return !this.dead && this.state !== "idle"; }
   aimPoint(){ return new THREE.Vector3(this.pos.x, this.pos.y + 1.8, this.pos.z); }
