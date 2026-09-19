@@ -1310,7 +1310,7 @@ function deerStart(client = false){   // client = the co-op partner: same scene,
     nextWaveT: 0, lastHit: -99, lastWarn: -99, lastAmmoWarn: -99, missionsT: 0, bossHp: 0,
     deerTgt: { pos: new THREE.Vector3(W.deer.x, W.deer.y + 1.7, W.deer.z), feet: W.deer.y, deer: true } };
   // words only the deer can teach: at least 20 % of the pool, short enough for the 퇴마사 stickers
-  const shorts = client ? [] : shuffleA(G.pool.filter(shortWord)), n = Math.min(shorts.length, Math.max(TECHS.length, Math.ceil(G.pool.length * .2)));
+  const shorts = client ? [] : shuffleA(G.pool.filter(shortWord)), n = Math.min(shorts.length, Math.max(2, Math.ceil(G.pool.length * .2)));   // 20 % of the list (a small list = fewer technologies)
   S.deerWords = shorts.slice(0, n); S.deerIds = new Set(S.deerWords.map(w => w.id));
   TECHS.forEach((t, i) => { if (S.deerWords[i]) S.techWord[t.id] = S.deerWords[i]; });
   S.growWords = S.deerWords.slice(TECHS.length);
@@ -1758,7 +1758,14 @@ function deerTick(dt, rdt){
   }
 }
 // ---- ⚔️ the attack lane: train deer at the shelter (8 questions each), gather a herd, charge the hive ----
-const techCost = () => 40 * ((G.sanct ? G.sanct.tech.size : 0) + 1);   // 40, 80, 120 … gold
+// Technology prices follow the gold this run will pay: all techs together ≈ 80 % of what the waves give
+// (1 per alien, 20 per boss) before the wave words run out — still rising (1×, 2×, 3× …) as you buy more.
+function techCost(){
+  const S = G.sanct; if (!S) return 40;
+  const n = Math.max(1, Object.keys(S.techWord).length), W = Math.max(1, Math.ceil((G.pool.length - S.deerWords.length) / 4));
+  const income = 45 * W + 1.5 * W * (W + 1) + 20 * W, scale = Math.min(1, .8 * income / (20 * n * (n + 1)));
+  return Math.max(10, Math.round(40 * (S.tech.size + 1) * scale / 5) * 5);
+}
 function openShelter(){ openPanel("shelter", "🦌 사슴 목장 · Deer shelter"); renderShelter(); }
 function renderShelter(){   // no explanations: the numbers + watching the herd march teach how it works
   const S = G.sanct, n = S.herd.length, full = armySize() >= herdCap();
