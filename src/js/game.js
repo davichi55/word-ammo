@@ -1320,6 +1320,8 @@ function deerStart(client = false){   // client = the co-op partner: same scene,
   // 🛡 the hive's shield: a glowing bubble over the gate until the deer is big enough
   S.shield = new THREE.Mesh(new THREE.SphereGeometry(6.5, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7ce8ff, transparent: true, opacity: .25, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
   S.shield.position.set(W.hive.x, 0, W.hive.z); scene.add(S.shield); S.signs.push(S.shield);
+  // 🏕 enemy camps on the gold road: conquered by a march with more deer than defenders (they refill every 30 s)
+  S.camps = CAMPS.map(([wp, n, gold]) => makeCamp(wp, n, gold)); S.camps.forEach(c => S.signs.push(c.g)); S.marchT = 30;
   S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.36), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
   S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(2, 2, 1); S.crystal.add(S.crystalGlow);
   S.trapBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
@@ -1592,13 +1594,13 @@ function renderMissions(){
     ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
     ${row(hits * dmg >= bossHp, `🪤 보스 · boss ❤ <b>${bossHp}</b> — traps ${hits} × ${dmg} = ${hits * dmg}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
     ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b> · 💰 ${G.coins}/${techCost()}`) : ""}
-    ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>/${herdCap()}${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} <small>(8 questions each)</small>`)}
+    ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>/${herdCap()}${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} · march in ${Math.ceil(S.marchT || 0)} s · 🏕 ${S.camps.filter(c => c.conquered).length}/${S.camps.length} <small>(8 questions per deer)</small>`)}
     <div class="mFoot">Tab 🎒 내 단어 · your words</div>`;
 }
 function deerTick(dt, rdt){
   if (G.mode !== "deer" || G.over || !G.sanct) return;
   const S = G.sanct;
-  if (!isClient()) { towersTick(dt); trapsTick(dt); runnersTick(dt); }   // the partner only mirrors
+  if (!isClient()) { towersTick(dt); trapsTick(dt); runnersTick(dt); marchTick(dt); }   // the partner only mirrors
   for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
   // 🔧 a light over the workshop while your traps can't kill this wave's boss
   const bossLeft = bossLiveHp();
@@ -1644,11 +1646,54 @@ function renderShelter(){
   const S = G.sanct, n = S.herd.length, full = armySize() >= herdCap();
   $("#noteBody").innerHTML = `<div class="qHead">🦌 herd <b>${n}</b> / ${herdCap()} (stage ${deerStage()}/10) · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax}${gateShielded() ? " · 🛡 shielded" : ""}</div>
     ${gateShielded() ? `<div class="dList"><div>🛡 둥지의 방패는 사슴이 ${SHIELD_STAGE}단계가 되면 사라져요 · the hive's shield drops when the deer reaches stage ${SHIELD_STAGE} (learn words). Deer that reach a shielded gate just run home.</div></div>` : ""}
-    <div class="dList"><div>🏆 목표: 둥지의 문을 부수면 승리! · GOAL: break the hive gate to win</div>
-    <div>둥지의 탑이 사슴을 맞히면 목장으로 돌아와요 (약 1초에 1마리) · the spire hits about 1 deer per second — a hit deer runs back to the herd, so only a big herd gets many through</div>
-    <div>문에 닿은 사슴 1마리 = −1 · every deer that reaches the gate: −1 (it stays there)</div></div>
+    <div class="dList"><div>⚔️ 무리는 ${MARCH_EVERY}초마다 행진해요 · the herd marches by itself every ${MARCH_EVERY} s — next in <b>${Math.ceil(S.marchT)} s</b></div>
+    <div>🏕 캠프: 수비병보다 사슴이 많으면 점령! · camps fall to a march with MORE deer than defenders (they refill every ${MARCH_EVERY} s): ${S.camps.map((c, i) => c.conquered ? `🚩 ${i + 1}` : `🏕 ${i + 1}: ${c.max} (+💰${c.gold})`).join(" · ")}</div>
+    <div>🏆 그다음 둥지: 문을 부수면 승리! · then the hive: break its gate to win (the spire sends deer home)</div>
+    <div>쓰러진 사슴은 목장으로 돌아와요 · fallen deer come back to the pen — you never lose them</div></div>
     <div class="shop" style="margin-top:10px"><button data-act="train" ${full ? "disabled" : ""}><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions on your words${full ? " — herd full: grow the deer for more" : ""}</small><span class="c">${full ? "FULL" : "🦌 +1"}</span></button>
-    <button data-act="charge" ${n ? "" : "disabled"}><span class="k">2</span><b>돌격! · Charge!</b> <small>send the whole herd down the gold road</small><span class="c">🦌 ×${n}</span></button></div>`;
+    </div>`;
+}
+const CAMPS = [[3, 10, 60], [4, 22, 120], [5, 34, 200]];   // [gold-road waypoint, defenders, 💰 reward] — about what the herd holds at stages 1, 3, 5
+const MARCH_EVERY = 30;
+function makeCamp(wp, n, gold){
+  const p = world.road2[wp], q = world.road2[wp + 1], ang = Math.atan2(q.x - p.x, q.z - p.z), side = { x: Math.cos(ang) * 6, z: -Math.sin(ang) * 6 };
+  const g = new THREE.Group(); g.position.set(p.x, p.y, p.z); scene.add(g);
+  const cloth = new THREE.MeshStandardMaterial({ color: 0x4a2a5a, roughness: .8, flatShading: true });
+  for (const k of [-1, 1]) { const t = new THREE.Mesh(new THREE.ConeGeometry(1.6, 2.4, 6), cloth); t.position.set(side.x + k * 2.2, 1.2, side.z + k * 1.2); g.add(t); }
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(.07, .07, 4.5, 6), new THREE.MeshStandardMaterial({ color: 0x3b2c22 })); pole.position.set(side.x, 2.25, side.z); g.add(pole);
+  const flagMat = new THREE.MeshBasicMaterial({ color: 0xff4fd8, side: THREE.DoubleSide }); const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, .9), flagMat); flag.position.set(side.x + .7, 4, side.z); g.add(flag);
+  const fire = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xff7a3a, transparent: true, opacity: .8, depthWrite: false, blending: THREE.AdditiveBlending })); fire.position.set(side.x * .5, .6, side.z * .5); fire.scale.set(2, 2, 1); g.add(fire);
+  // the defenders: small purple aliens standing on the road (one figure shows ~1/12 of the camp)
+  const skin = new THREE.MeshStandardMaterial({ color: 0x6c5b82, roughness: .5, emissive: 0xff7de0, emissiveIntensity: .08 }), eye = new THREE.MeshBasicMaterial({ color: 0xff7de0 });
+  const defs = [];
+  for (let i = 0; i < Math.min(12, n); i++) { const a = i / Math.min(12, n) * Math.PI * 2, r = 1 + (i % 3) * .8, d = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(.22, .6, 4, 8), skin); body.position.y = .6; d.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(.22, 10, 8), skin); head.position.y = 1.25; head.scale.set(.85, 1.25, 1); d.add(head);
+    const e = new THREE.Mesh(new THREE.SphereGeometry(.05, 6, 5), eye); e.position.set(0, 1.28, .18); d.add(e);
+    d.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); d.rotation.y = Math.random() * 6; g.add(d); defs.push(d); }
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(`🏕 ${n}/${n}`, `camp · +💰${gold}`), transparent: true, depthWrite: false })); sign.position.set(side.x, 6.2, side.z); sign.scale.set(2.6, 1.3, 1); g.add(sign);
+  return { wp, max: n, alive: n, conquered: false, gold, g, defs, sign, flagMat, x: p.x, z: p.z };
+}
+function campVisual(c){
+  const key = c.alive + "/" + c.conquered; if (c.shown === key) return; c.shown = key;
+  const vis = c.conquered ? 0 : Math.ceil(c.alive / c.max * c.defs.length); c.defs.forEach((d, i) => d.visible = i < vis);
+  const old = c.sign.material.map; c.sign.material.map = c.conquered ? signTexture("🚩", "우리 땅 · conquered") : signTexture(`🏕 ${c.alive}/${c.max}`, `camp · +💰${c.gold}`); c.sign.material.needsUpdate = true; old.dispose();
+  c.flagMat.color.setHex(c.conquered ? 0x9fdcff : 0xff4fd8);
+}
+function campFight(c, r){   // one deer and one defender fall; the deer comes back in the pen (it marches again next time)
+  const S = G.sanct; c.alive--; r.done = true; r.home = true;
+  const at = new THREE.Vector3(r.x, r.g.position.y + 1, r.z); burst(at, 0xff7de0, 18, 5); burst(at, 0x9fdcff, 12, 4); fxOut({ b: [at.x, at.y, at.z, 0xff7de0] });
+  if (c.alive > 0) { campVisual(c); return; }
+  c.conquered = true; campVisual(c); G.coins += c.gold; SFX.pickup(); SFX.kill();
+  burst(new THREE.Vector3(c.x, 3, c.z), 0xffcf5c, 90, 9); floater(new THREE.Vector3(c.x, 5, c.z), `🚩 +💰${c.gold}`, "#ffcf5c", 38, 2);
+  helperShow(`🚩 캠프 점령! <small>Camp conquered — <b>+💰${c.gold}</b>. ${S.camps.filter(x => !x.conquered).length ? "Next camp further down the gold road." : "Only the hive is left!"}</small>`, 7);
+  renderMissions(); renderTop();
+}
+function marchTick(dt){   // every 30 s: the camps refill, and the whole herd marches
+  const S = G.sanct; S.marchT -= dt; if (S.marchT > 0) return;
+  S.marchT = MARCH_EVERY;
+  for (const c of S.camps) if (!c.conquered) { c.alive = c.max; campVisual(c); }
+  if (S.herd.length) { const n = S.herd.length; charge(true); objectiveFlash(`⚔️ 행진! · ${n} deer march down the gold road`); }
 }
 function trainQuiz(){
   const qs = [], used = new Set();
@@ -1669,7 +1714,7 @@ function charge(fromPartner){
   if (isClient()) { coopAct({ a: "charge" }); closePanel(); SFX.charge(); objectiveFlash(`⚔️ 돌격! · ${n} deer charge the hive!`); return; }
   S.herd.forEach((g, i) => { g.visible = true; S.runners.push({ g, wp: 0, x: g.position.x, z: g.position.z, delay: i * .18 }); });
   S.herd = []; if (!fromPartner) closePanel(); SFX.charge();
-  objectiveFlash(`⚔️ 돌격! · ${n} deer charge the hive!`); renderMissions();
+  if (!fromPartner) objectiveFlash(`⚔️ 돌격! · ${n} deer charge the hive!`); renderMissions();
 }
 function runnersTick(dt){
   const S = G.sanct, R = world.road2, Hv = world.hive, T = Hv.turret;
@@ -1679,9 +1724,10 @@ function runnersTick(dt){
     const p = R[Math.max(0, Math.min(r.wp, R.length - 1))], dx = p.x - r.x, dz = p.z - r.z, d = Math.hypot(dx, dz), sp = (r.back ? 5 : 7) * dt;
     if (d < sp + .3) {
       if (r.back) { r.wp--; if (r.wp < 0) { r.done = true; r.home = true; continue; } }   // made it home: back into the herd
-      else { r.wp++; if (r.wp >= R.length) {
+      else { const camp = S.camps.find(c => c.wp === r.wp && !c.conquered && c.alive > 0); if (camp) { campFight(camp, r); continue; }   // 🏕 a camp in the way: fight
+        r.wp++; if (r.wp >= R.length) {
         if (gateShielded()) { r.back = true; r.wp = R.length - 2; burst(new THREE.Vector3(r.x, r.g.position.y + 1, r.z), 0x7ce8ff, 16, 5); continue; }   // 🛡 bounces off, runs home
-        hitGate(); r.done = true; continue; } } }
+        hitGate(); r.done = true; r.home = true; continue; } } }   // it hits the gate once and comes home
     else { r.x += dx / d * sp; r.z += dz / d * sp; r.g.rotation.y = Math.atan2(dx, dz); }
     r.g.position.set(r.x, world.groundY(r.x, r.z) + Math.abs(Math.sin(G.time * 14 + r.x)) * .25, r.z);
   }
@@ -1721,7 +1767,8 @@ function gateVisual(){   // the gate's sign + membrane follow its HP (host and p
 const bossLiveHp = () => { const S = G.sanct; if (isClient()) return S.bossLive || 0; const b = G.bossOut && G.aliens.find(a => a.special && !a.dead); return G.bossOut ? (b ? b.hp : 0) : S.bossHp; };
 function deerSnap(){
   const S = G.sanct;
-  return { sd: [Math.round(S.hp), S.max, S.ammo, S.kits, S.herd.length, S.gateHp, S.gateMax, S.hiveBroken ? 1 : 0, Math.round(bossLiveHp()), G.time - S.lastHit < .5 ? 1 : 0],
+  return { sd: [Math.round(S.hp), S.max, S.ammo, S.kits, S.herd.length, S.gateHp, S.gateMax, S.hiveBroken ? 1 : 0, Math.round(bossLiveHp()), G.time - S.lastHit < .5 ? 1 : 0,
+      Math.ceil(S.marchT), S.camps.map(c => c.conquered ? -1 : c.alive)],
     rn: S.runners.filter(r => r.delay <= 0).map(r => [r2(r.x), r2(r.z)]) };
 }
 function deerFort(){
@@ -1740,7 +1787,8 @@ function applyDeerFort(f){
 }
 function applyDeerSnap(s){
   const S = G.sanct; if (!S || !s.sd) return;
-  const [hp, max, ammo, kits, herd, gate, gmax, broken, boss, hit] = s.sd;
+  const [hp, max, ammo, kits, herd, gate, gmax, broken, boss, hit, march, camps] = s.sd;
+  S.marchT = march; (camps || []).forEach((v, i) => { const c = S.camps[i]; if (!c) return; if (v < 0) { if (!c.conquered) { c.conquered = true; burst(new THREE.Vector3(c.x, 3, c.z), 0xffcf5c, 90, 9); } } else c.alive = v; campVisual(c); });
   Object.assign(S, { hp, max, ammo, kits, gateHp: gate, gateMax: gmax, hiveBroken: !!broken, bossLive: boss }); if (!G.bossOut) S.bossHp = boss; if (hit) S.lastHit = G.time;
   renderHP(); gateVisual();
   while (S.herd.length < herd) S.herd.push(herdMesh(S.herd.length));
