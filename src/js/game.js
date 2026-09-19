@@ -775,6 +775,7 @@ function openNote(){
 /* ---- the quiz: new word → meaning, new word → type, then earlier words (meaning → Korean). Perfect round to pass. ---- */
 let Q = null;
 const POS_LIST = ["명사", "동사", "형용사", "부사", "표현"];
+const POS_EN = { 명사: "noun", 동사: "verb", 형용사: "adjective", 부사: "adverb", 표현: "expression" };   // shown under the Korean on word-type buttons
 const shuffleA = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 // content words of a word's English meaning ("by nature, so much" → nature, much) — to keep look-alike options apart
 const GLOSS_STOP = new Set("the and for with from into onto one someone something sth very not out off get make have take give about more most than that this what when".split(" "));
@@ -815,7 +816,7 @@ function renderQuiz(msg){
   if (q.audio && !msg) say([wordClip(q.w.id)], { interrupt: true });
   $("#noteBody").innerHTML = `<div class="qHead">📝 퀴즈 ${Q.i + 1} / ${Q.qs.length}${Q.round > 1 ? ` · 도전 ${Q.round}번째 · try ${Q.round}` : ""}</div>
     <div class="qPrompt">${q.prompt}</div>
-    <div class="qOpts">${q.opts.map((o, i) => `<button data-opt="${i}"><span class="k">${i + 1}</span>${esc(o)}</button>`).join("")}</div>
+    <div class="qOpts">${q.opts.map((o, i) => `<button data-opt="${i}"><span class="k">${i + 1}</span>${esc(o)}${POS_EN[o] ? ` <small class="posEn">${POS_EN[o]}</small>` : ""}</button>`).join("")}</div>
     <div class="qMsg">${msg || `숫자 키 1–${q.opts.length} 또는 클릭 · keys 1–${q.opts.length} or click`}</div>`;
 }
 function answerQuiz(idx){

@@ -183,6 +183,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #note .qOpts button{font:inherit;font-size:18px;text-align:left;cursor:pointer;background:#fff8e6;color:#2a1d0c;border:2px solid #b08a4a;border-radius:10px;padding:10px 12px;min-height:52px}
 #note .qOpts button:hover{background:#ffefc4}
 #note .qOpts button .k{display:inline-block;width:22px;height:22px;margin-right:8px;border-radius:6px;background:#2a1d0c;color:#f8ecd0;font-size:13px;text-align:center;line-height:22px}
+#note .qOpts button .posEn{font-size:14px;color:#8a6a3a;margin-left:6px}
 #note .qOpts button.right{background:#bff0d2;border-color:#2e8f5a}
 #note .qOpts button.wrong{background:#f7c3c3;border-color:#b8323f}
 #note .qMsg{margin-top:12px;font-size:15px;color:#6a4a20;min-height:20px}
