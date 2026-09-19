@@ -159,7 +159,7 @@ export function buildSanctuaryWorld(root){
     lightSpots.push({ x, y: H + 2, z, color: 0x7ce8ff, power: 12, dist: 10 }); }
   { const { x, z } = PEDESTAL;   // pedestal: a stone column with a floating crystal (the crystal itself is added by the game)
     const col = new THREE.CylinderGeometry(.7, .9, 1.4, 12); col.translate(x, H + .7, z); add(stoneMat, col);
-    const top = new THREE.CylinderGeometry(1.1, .8, .3, 12); top.translate(x, H + 1.55, z); add(stoneMat, top); addCol(x - .9, x + .9, z - .9, z + .9, H, H + 1.7); }
+    const top = new THREE.CylinderGeometry(1.1, .8, .3, 12); top.translate(x, H + 1.55, z); add(stoneMat, top); addCol(x - 1.5, x + 1.5, z - 1.5, z + 1.5, H, H + 1.7); }   // keeps you a step back from the crystal
   { const { x, z } = WORKSHOP;   // workshop: an open stall with a roof, a workbench and an anvil
     for (const [px, pz] of [[-2.5, -2], [2.5, -2], [-2.5, 2], [2.5, 2]]) { const p = new THREE.CylinderGeometry(.14, .14, 3, 8); p.translate(x + px, H + 1.5, z + pz); add(woodMat, p); addCol(x + px - .2, x + px + .2, z + pz - .2, z + pz + .2, H, H + 3); }
     const rf = new THREE.ConeGeometry(4.3, 1.6, 4); rf.rotateY(Math.PI / 4); rf.translate(x, H + 3.8, z); add(pineSnow, rf);

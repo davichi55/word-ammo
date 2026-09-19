@@ -481,6 +481,8 @@ addEventListener("mousemove", e => {
 addEventListener("keydown", e => {
   if (!G.running || G.over) return;
   const k = e.code;
+  // after Esc closed a panel the mouse is free: any other key (a real user gesture, unlike Esc) captures it again
+  if (!G.noteOpen && !G.backpackOpen && !G.paused && k !== "Escape" && document.pointerLockElement !== renderer.domElement) { initAudio(); lock(); }
   if (G.noteOpen) { e.preventDefault();
     if (G.panel === "picker") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n && G.unlocked[+n[1] - 1]) { pickWordFor(G.pickerTower, G.unlocked[+n[1] - 1]); closePanel(); } if (k === "Escape" || k === "KeyE") closePanel(); return; }
     if (G.panel === "shop") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n) buy(+n[1] - 1); if (k === "Escape" || k === "KeyE") closePanel(); return; }
@@ -1286,8 +1288,8 @@ function deerStart(){
   S.deerMesh = deerMesh(); S.deerMesh.position.set(W.deer.x, W.deer.y + .4, W.deer.z); scene.add(S.deerMesh); S.deerMesh.scale.setScalar(deerSize());
   const tag = (text, sub, x, y, z, sc = 1) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(text, sub), transparent: true, depthWrite: false })); s.position.set(x, y, z); s.scale.set(1.8 * sc, .9 * sc, 1); scene.add(s); return s; };
   S.signs = [tag("🦌 E", "수업 · lessons", W.deer.x, W.deer.y + 4.6, W.deer.z), tag("💎 E", "탄약 · ammo", W.pedestal.x, W.pedestal.y + 3.6, W.pedestal.z), tag("🔧 E", "함정 · traps", W.workshop.x, W.workshop.y + 5.2, W.workshop.z)];
-  S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.55), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
-  S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(3, 3, 1); S.crystal.add(S.crystalGlow);
+  S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.36), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
+  S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(2, 2, 1); S.crystal.add(S.crystalGlow);
   for (const [x, z] of W.pads.slice(0, 4)) addPad(x, z);
   deerWave();
 }
@@ -1918,7 +1920,7 @@ const UI = {
   tagline: "외계인마다 약한 단어가 하나 있어요. 루미의 말을 듣고, 가방에서 그 단어를 찾아 장전하고, 쏘세요.<br><small>Every alien is weak to one Korean word. Listen to Lumi, find the word in your backpack, load it, fire.</small>",
   tutorial: "🎓 튜토리얼 · Tutorial", lang: "Meaning language", labels: "Backpack labels", hints: "Lumi shows the word", sens: "Mouse sensitivity", volume: "Volume",
   chapters: "Chapters", classes: "Classes", star: "Priority words only", resume: "▶ Resume", quit: "Quit run", over: "Game over", review: "Words to review",
-  again: "↻ Again", menu: "Menu", click: "Click to play",
+  again: "↻ Again", menu: "Menu", click: "Click or press any key to play",
   controls: "<b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> dash · <b>Mouse</b> aim/shoot · <b>Tab</b> backpack (time slows) · <b>1–4</b> recent ammo · <b>R</b> reload · <b>Q</b> hear the word again · <b>Esc</b> pause · <b>F11</b> fullscreen",
 };
 function renderMenu(){
