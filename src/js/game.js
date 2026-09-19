@@ -1600,6 +1600,8 @@ function renderDuel(){
   q.opts.forEach((o, i) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.3), new THREE.MeshBasicMaterial({ map: textTex(o, "", 768, 290, "rgba(20,30,50,.92)"), transparent: true, toneMapped: false }));
     m.position.set(D.x + (i % 2 ? 1.85 : -1.85), DUEL.y + 1.2 + (i < 2 ? 1.6 : 0), DUEL.z + 8); m.rotation.y = Math.PI; m.userData.opt = i; A.g.add(m); A.targets.push(m);
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(3.9, 1.8), new THREE.MeshBasicMaterial({ color: 0xffc83d, transparent: true, opacity: .9, toneMapped: false }));
+    glow.position.set(0, 0, -.06); glow.visible = false; m.add(glow); m.userData.glow = glow;   // the gold frame behind the aimed-at panel
   });
 }
 function duelBar(){
@@ -1650,6 +1652,13 @@ function duelFire(){
     if (!q.fixed) q.opts = shuffleA(q.opts); renderDuel();
     if (!G.coop) zapMe(); else if (isHost()) fxOut({ zap: 1 }); else coopAct({ a: "zap" });
   }
+}
+// the answer panel under the centre of the screen lights up gold (no crosshair needed)
+function duelHover(){
+  const A = G.sanct.arena; if (!A || !A.targets.length) return;
+  camera.updateMatrixWorld(); ray.setFromCamera({ x: 0, y: 0 }, camera);
+  const hit = ray.intersectObjects(A.targets, false)[0], on = hit ? hit.object : null;
+  for (const m of A.targets) { const h = m === on && !(G.duel.zapT > 0); m.material.color.setHex(h ? 0xfff2c4 : 0xffffff); m.scale.setScalar(h ? 1.12 : 1); if (m.userData.glow) m.userData.glow.visible = h; }
 }
 function zapMe(){   // ⚡ purely for fun: blue flash, shake, a few bolts, 0.9 s without shooting
   if (G.duel) G.duel.zapT = .9;
@@ -1734,7 +1743,7 @@ function deerTick(dt, rdt){
   $("#radar").hidden = !tgt || G.noteOpen;
   if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
     $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`; $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
-  if (G.duel) G.duel.zapT = Math.max(0, G.duel.zapT - rdt);
+  if (G.duel) { G.duel.zapT = Math.max(0, G.duel.zapT - rdt); duelHover(); }
   S.missionsT -= rdt; if (S.missionsT <= 0) { S.missionsT = .5; renderMissions(); if (G.panel === "shelter") renderShelter(); }
   // waves (the host runs them)
   if (isClient()) return;
