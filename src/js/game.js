@@ -380,7 +380,7 @@ function renderQuick(){
 function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
 function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
   if (G.mode === "deer" && G.sanct) { const b = G.bossOut;
-    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? "👑 결투 · duel" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
+    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${G.sanct.wavesDone ? "🌙 no more waves" : b ? "👑 결투 · duel" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
     $("#scoreLbl").textContent = `🦌 ❤ ${Math.ceil(G.sanct.hp)}`; return; }
   if (G.mode === "fortress") { const z = world.zones[G.zone];
     $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
@@ -1348,7 +1348,12 @@ function deerWave(){
   const S = G.sanct, fresh = [];
   for (let i = 0; i < 4; i++) { const w = nextNewWord(); if (!w) break; G.unlocked.push(w); G.newIds.add(w.id); markKill(w); fresh.push(w); }
   if (!fresh.length && S.deerWords.every(w => G.unlocked.includes(w))) { G.won = true; say([lineClip("clear")]); gameOver(); return; }   // every word known
-  G.wave++; if (fresh.length) G.waveWords = fresh;
+  if (!fresh.length) {   // no new words left for the waves: the valley goes quiet — finish the deer lessons, the herd and the hive
+    S.wavesDone = true; G.bossOut = false; G.waveSize = 0; G.waveKills = 0; G.calmT = 0; renderTop(); renderMissions();
+    helperShow("🌙 조용해졌어요 <small>The waves have no new words left — no more waves. Finish the deer lessons, grow the herd and break the hive gate!</small>", 12);
+    return;
+  }
+  G.wave++; G.waveWords = fresh;
   G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.waveSize = 45 + 3 * G.wave; G.calmT = G.wave === 1 ? 35 : 20; G.lastCalm = -1; G.spawnT = 2;
   S.bossHp = bossHpFor(G.wave); S.hp = Math.min(S.max, S.hp + 200);
   growDeer(); renderHP();
@@ -1499,7 +1504,8 @@ function openDemon(o){
   const f = document.createElement("iframe"); f.id = "lessonFrame"; f.src = "demon-lesson.html"; document.body.appendChild(f); G.demon = { f, o, data: { type: "lesson", cards, play, newIdx: idx.get(o.w.id), lang: settings.lang } };
   f.addEventListener("load", () => { try { f.contentWindow.focus(); } catch (e) {} });
 }
-function closeDemon(){ if (G.demon) { G.demon.f.remove(); G.demon = null; } G.noPauseUntil = performance.now() + 2500; G.wasLocked = false; G.noteOpen = false; G.panel = null; G.timeScale = 1; G.panelClosedAt = performance.now(); $("#clickToPlay").hidden = false; }
+function closeDemon(){ if (G.demon) { G.demon.f.remove(); G.demon = null; } G.noPauseUntil = performance.now() + 2500; G.wasLocked = false; G.noteOpen = false; G.panel = null; G.timeScale = 1; G.panelClosedAt = performance.now(); $("#clickToPlay").hidden = false;
+  if (G.pendingDuel) { G.pendingDuel = false; setTimeout(() => { if (G.running && G.mode === "deer" && G.bossOut) startDuelLocal(); }, 400); } }
 addEventListener("message", e => {
   const d = e.data; if (!d || d.from !== "demon-lesson" || !G.demon || e.source !== G.demon.f.contentWindow) return;
   if (d.type === "ready") { G.demon.f.contentWindow.postMessage(G.demon.data, "*"); try { G.demon.f.contentWindow.focus(); } catch (err) {} return; }
@@ -1617,6 +1623,7 @@ function duelBar(){
 }
 function startDuelLocal(){
   const S = G.sanct; if (G.duel) return;
+  if (G.demon) { G.pendingDuel = true; return; }   // never pull someone out of a deer lesson: the duel waits
   if (G.demon) closeDemon(); if (G.noteOpen) closePanel(); if (G.backpackOpen) closeBackpack(false);
   const A = buildArena(), side = isClient() ? "right" : "left", x = DUEL[side];
   G.duel = { side, x, qs: duelQuestions(), i: 0, zapT: 0, back: { x: player.body.x, y: player.body.y, z: player.body.z, yaw: player.yaw } };
@@ -1849,8 +1856,8 @@ function deerTick(dt, rdt){
     $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`; $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
   if (G.duel) { G.duel.zapT = Math.max(0, G.duel.zapT - rdt); duelHover(); }
   S.missionsT -= rdt; if (S.missionsT <= 0) { S.missionsT = .5; renderMissions(); if (G.panel === "shelter") renderShelter(); }
-  // waves (the host runs them)
-  if (isClient()) return;
+  // waves (the host runs them; none once the wave words are used up)
+  if (isClient() || S.wavesDone) return;
   if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen && !G.coop) S.nextWaveT = .2; else deerWave(); } return; }
   if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
   if (S.introTip && G.waveSpawned > 0) { S.introTip = false; helperHide = .1; }   // the aliens are coming: Lumi's intro can go
