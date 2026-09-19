@@ -1548,6 +1548,7 @@ function deerTick(dt, rdt){
   // waves
   if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen) S.nextWaveT = .2; else deerWave(); } return; }
   if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
+  if (S.introTip && G.waveSpawned > 0) { S.introTip = false; helperHide = .1; }   // the aliens are coming: Lumi's intro can go
   if (G.waveKills >= G.waveSize && !G.bossOut) spawnDeerBoss();
   const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(30, 12 + G.wave * 2);
   G.spawnT -= dt;
@@ -1851,7 +1852,7 @@ function startGame(tutorial, mode = "district"){
     helperShow(`첫 단어: <b class="typed">${esc(w0.kr)}</b> <small>= ${esc(meaning(w0))} · walk to a 🔨 pad + E to build a tower (quiz)</small>`, 7); say([wordClip(w0.id)]); }
   else if (mode === "deer") { pedestal.visible = false; player.hasGun = false; gun.visible = false;
     deerStart();
-    helperShow("🦌 <small>Protect the baby deer! 🔨 build towers · 💎 make ammo · 🔧 build traps (the only thing that hurts the boss) · 🦌 learn from the deer. The missions are top left.</small>", 10); }
+    helperShow("🦌 <small>Protect the baby deer! 🔨 build towers · 💎 make ammo · 🔧 build traps (the only thing that hurts the boss) · 🦌 learn from the deer. The missions are top left.</small>", 1e9); G.sanct.introTip = true; }   // stays up until the first aliens come
   else if (mode === "escape") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); placeBeam();
     objective(`🏃 탈출 모드 · Fight your way to the <b>cathedral altar</b> — follow the golden light. Read the word on their shirts! <small>1–9 / mouse wheel = switch word · first word: <b>${esc(w0.kr)}</b> = ${esc(meaning(w0))}</small>`);
