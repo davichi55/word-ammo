@@ -33,6 +33,8 @@
   <canvas id="minimap" width="170" height="170"></canvas>
   <div id="interact" hidden></div>
   <div id="missions" hidden></div>
+  <div id="chatLog"></div>
+  <div id="chatBox" hidden><input id="chatInput" maxlength="200" placeholder="💬 파트너에게 · to your partner — Enter = send, Esc = cancel" autocomplete="off"></div>
   <div id="radar" hidden><div id="radarArrow">➤</div><div id="radarDist"></div><small>루미 레이더</small></div>
   <div id="keys">
     <span><b>Tab</b> 가방</span><span><b>Q</b> 다시 듣기</span><span><b>Space</b> 대시</span><span><b>1–4</b> 빠른 탄창</span><span><b>Esc</b> 메뉴</span>
@@ -63,7 +65,7 @@
     <button class="btn deer" id="deerBtn"></button>
     <button class="btn fort" id="fortBtn"></button>
     <div class="coop">
-      <div class="gl">👥 요새 같이 하기 · Fortress co-op (2 players)</div>
+      <div class="gl">👥 사슴 같이 지키기 · Deer Sanctuary co-op (2 players)</div>
       <div class="coopRow"><button class="btn" id="hostBtn">방 만들기 · Host</button><input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off"><button class="btn" id="joinBtn">참가 · Join</button></div>
       <div id="coopStatus"></div>
       <button class="btn main" id="coopStart" hidden>▶ 같이 시작 · Start co-op</button>

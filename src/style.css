@@ -225,3 +225,11 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #note .dList{display:flex;flex-direction:column;gap:4px;margin:8px 0;font-size:15px;color:#4a3210}
 #lessonFrame{position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:30;background:#1a0b2e}
 #missions .mFoot{margin-top:3px;color:#8aa0c0;font-size:12px}
+
+/* 💬 co-op chat */
+#chatLog{position:fixed;left:14px;bottom:120px;z-index:4;max-width:min(420px,60vw);display:flex;flex-direction:column;gap:3px;pointer-events:none}
+#chatLog div{background:rgba(8,16,30,.72);color:#e8f0ff;border-radius:8px;padding:4px 10px;font-size:14px;transition:opacity 1s}
+#chatLog div b{color:#9fdcff;margin-right:4px}
+#chatLog div.old{opacity:0}
+#chatBox{position:fixed;left:14px;bottom:82px;z-index:6;width:min(460px,70vw)}
+#chatInput{width:100%;font:inherit;font-size:15px;padding:8px 12px;border-radius:10px;border:2px solid #7cf7d4;background:rgba(8,16,30,.92);color:#fff;outline:none}

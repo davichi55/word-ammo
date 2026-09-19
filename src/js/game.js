@@ -378,8 +378,8 @@ function renderQuick(){
 }
 function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
 function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
-  if (G.mode === "deer" && G.sanct) { const b = G.bossOut && G.aliens.find(a => a.special && !a.dead);
-    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? `👑 ❤ ${Math.max(0, Math.ceil(b.hp))}` : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
+  if (G.mode === "deer" && G.sanct) { const b = G.bossOut;
+    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? `👑 ❤ ${Math.max(0, Math.ceil(bossLiveHp()))}` : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
     $("#scoreLbl").textContent = `🦌 ❤ ${Math.ceil(G.sanct.hp)}`; return; }
   if (G.mode === "fortress") { const z = world.zones[G.zone];
     $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
@@ -482,8 +482,9 @@ addEventListener("mousemove", e => {
   player.yaw -= e.movementX * s; player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * s));
 });
 addEventListener("keydown", e => {
-  if (!G.running || G.over) return;
+  if (!G.running || G.over || G.chatting) return;
   const k = e.code;
+  if (k === "Enter" && G.coop && !G.noteOpen && !G.backpackOpen) { e.preventDefault(); openChat(); return; }   // 💬 co-op chat
   // after Esc closed a panel the mouse is free: any other key (a real user gesture, unlike Esc) captures it again
   if (!G.noteOpen && !G.backpackOpen && !G.paused && k !== "Escape" && document.pointerLockElement !== renderer.domElement) { initAudio(); lock(); }
   if (G.noteOpen) { e.preventDefault();
@@ -1285,12 +1286,12 @@ const bossHpFor = wave => Math.round(200 * Math.pow(1.45, wave - 1));
 const ammoPerQuiz = () => Math.round(SANCT.ammoQuiz * Math.pow(1.12, G.wave - 1) * (has("battery") ? 1.5 : 1));   // grows with the waves (+12 %)
 const alienHp = wave => Math.round(100 * Math.pow(1.15, wave - 1));                   // 100, 115, 132 … 352 at wave 10
 const alienSpeed = wave => Math.min(3.4, rnd(1.5, 1.9) * Math.pow(1.05, wave - 1));   // +5 % a wave, max ≈ ×2
-function deerStart(){
+function deerStart(client = false){   // client = the co-op partner: same scene, but the host runs the game and sends the state
   const W = world, S = G.sanct = { hp: SANCT.deerMax, max: SANCT.deerMax, ammo: 20, kits: 0, traps: [], tech: new Set(), learned: [], techWord: {}, growWords: [],
     nextWaveT: 0, lastHit: -99, lastWarn: -99, lastAmmoWarn: -99, missionsT: 0, bossHp: 0,
     deerTgt: { pos: new THREE.Vector3(W.deer.x, W.deer.y + 1.7, W.deer.z), feet: W.deer.y, deer: true } };
   // words only the deer can teach: at least 20 % of the pool, short enough for the 퇴마사 stickers
-  const shorts = shuffleA(G.pool.filter(shortWord)), n = Math.min(shorts.length, Math.max(TECHS.length, Math.ceil(G.pool.length * .2)));
+  const shorts = client ? [] : shuffleA(G.pool.filter(shortWord)), n = Math.min(shorts.length, Math.max(TECHS.length, Math.ceil(G.pool.length * .2)));
   S.deerWords = shorts.slice(0, n); S.deerIds = new Set(S.deerWords.map(w => w.id));
   TECHS.forEach((t, i) => { if (S.deerWords[i]) S.techWord[t.id] = S.deerWords[i]; });
   S.growWords = S.deerWords.slice(TECHS.length);
@@ -1306,6 +1307,7 @@ function deerStart(){
   S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(2, 2, 1); S.crystal.add(S.crystalGlow);
   S.trapBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
   S.trapBeam.position.set(W.workshop.x, W.workshop.y + 30, W.workshop.z); S.trapBeam.visible = false; scene.add(S.trapBeam);
+  if (client) { S.briefWave = 0; S.runnerMeshes = []; return; }
   for (const [x, z] of W.pads.slice(0, 4)) addPad(x, z);
   deerWave();
 }
@@ -1362,7 +1364,9 @@ function renderPedestal(){
 function ammoQuiz(){
   const w = pickQuizWord();
   deerQuiz("ammoq", "💎 탄약 퀴즈 · Ammo quiz", twoQ(w), () => {
-    const S = G.sanct, add = ammoPerQuiz(); S.ammo += add; SFX.pickup();
+    const S = G.sanct, add = ammoPerQuiz(); SFX.pickup();
+    if (isClient()) { coopAct({ a: "ammo" }); objectiveFlash(`💎 +${add} 탄약 · ammo`); openPedestal(); return; }
+    S.ammo += add;
     burst(S.crystal.position.clone(), 0xb388ff, 50, 6); objectiveFlash(`💎 +${add} 탄약 · ammo (${S.ammo})`); openPedestal(); });
 }
 // ---- workshop: traps ----
@@ -1380,20 +1384,27 @@ function trapQuiz(){
   for (const w of ws) qs.push(knownQuestion(w, ["mean"]), knownQuestion(w, ["kr"]));
   while (qs.length < 8) qs.push(knownQuestion(pick(ws), ["pos"]));
   deerQuiz("trapq", "🔧 함정 퀴즈 · Trap quiz (8)", shuffleA(qs).slice(0, 8), () => {
-    S.kits++; SFX.pickup(); objectiveFlash("📦 함정 완성! · Trap ready — walk onto the glowing road and press <b>E</b> to place it"); renderMissions(); });
+    if (isClient()) coopAct({ a: "kit" }); else S.kits++;
+    SFX.pickup(); objectiveFlash("📦 함정 완성! · Trap ready — walk onto the glowing road and press <b>E</b> to place it"); renderMissions(); });
 }
-function placeTrap(){
+function placeTrap(at){
   const S = G.sanct; if (!S.kits) return;
-  const x = player.pos.x, z = player.pos.z, y = world.groundY(x, z), grp = new THREE.Group(); grp.position.set(x, y + .02, z);
+  const x = at ? at.x : player.pos.x, z = at ? at.z : player.pos.z;
+  if (isClient()) { coopAct({ a: "place", x: r2(x), z: r2(z) }); SFX.reload(); objectiveFlash("🪤 함정 설치! · Trap placed"); return; }
+  S.traps.push(makeTrap(x, z)); S.kits--;
+  SFX.reload(); objectiveFlash(`🪤 함정 설치! · Trap placed (${S.traps.length}/${trapSlots()})`); renderMissions();
+}
+function makeTrap(x, z){
+  const y = world.groundY(x, z), grp = new THREE.Group(); grp.position.set(x, y + .02, z);
   const plate = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.2, .12, 20), new THREE.MeshStandardMaterial({ color: 0x3a4458, roughness: .5, metalness: .6 })); plate.position.y = .06; grp.add(plate);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05, .05, 8, 36), new THREE.MeshBasicMaterial({ color: 0xff9a3a })); ring.rotation.x = Math.PI / 2; ring.position.y = .14; grp.add(ring);
   const spikes = new THREE.Group(); grp.add(spikes);
   for (let i = 0; i < 9; i++) { const a = i / 9 * Math.PI * 2, r = i ? .6 : 0, c = new THREE.Mesh(new THREE.ConeGeometry(.12, .7, 6), new THREE.MeshStandardMaterial({ color: 0xd8e2f0, metalness: .8, roughness: .3 })); c.position.set(Math.cos(a) * r, .35, Math.sin(a) * r); spikes.add(c); }
   spikes.position.y = -.5;
-  scene.add(grp); S.traps.push({ g: grp, x, y, z, ring, spikes, cd: 0, pop: 0 }); S.kits--;
-  SFX.reload(); objectiveFlash(`🪤 함정 설치! · Trap placed (${S.traps.length}/${trapSlots()})`); renderMissions();
+  scene.add(grp); return { g: grp, x, y, z, ring, spikes, cd: 0, pop: 0 };
 }
-function pickUpTrap(t){ const S = G.sanct; scene.remove(t.g); S.traps = S.traps.filter(x => x !== t); S.kits++; SFX.select(); objectiveFlash("📦 함정을 들었어요 · Trap picked up — E on the road to place it again"); renderMissions(); }
+function pickUpTrap(t){ const S = G.sanct;
+  if (isClient()) { coopAct({ a: "pick", i: S.traps.indexOf(t) }); SFX.select(); return; } scene.remove(t.g); S.traps = S.traps.filter(x => x !== t); S.kits++; SFX.select(); objectiveFlash("📦 함정을 들었어요 · Trap picked up — E on the road to place it again"); renderMissions(); }
 function trapsTick(dt){
   const S = G.sanct;
   for (const t of S.traps) {
@@ -1404,7 +1415,7 @@ function trapsTick(dt){
     if (!victims.length) continue;
     if (S.ammo < SANCT.trapCost) { if (G.time - S.lastAmmoWarn > 6) { S.lastAmmoWarn = G.time; objectiveFlash("⚠️ 함정에 탄약이 없어요! · A trap has no ammo — make ammo at the 💎 pedestal"); } continue; }
     S.ammo -= SANCT.trapCost; t.cd = SANCT.trapRearm; t.pop = 1; SFX.slam(); G.shake = Math.max(G.shake, player.pos.distanceTo(t.g.position) < 20 ? .3 : 0);
-    burst(new THREE.Vector3(t.x, t.y + .6, t.z), 0xff9a3a, 40, 7);
+    burst(new THREE.Vector3(t.x, t.y + .6, t.z), 0xff9a3a, 40, 7); fxOut({ b: [t.x, t.y + .6, t.z, 0xff9a3a] });
     for (const a of victims) {
       if (a.special) { const dmg = SANCT.trapDmg[trapLv()]; floater(a.aimPoint(), `👑 −${dmg}`, "#ff9a3a", 32, 1.2); a.stagger = .5; if (a.damage(dmg)) onKill(a, true); }
       else { a.damage(9999); onKill(a, true); }
@@ -1449,7 +1460,7 @@ addEventListener("message", e => {
   const d = e.data; if (!d || d.from !== "demon-lesson" || !G.demon || e.source !== G.demon.f.contentWindow) return;
   if (d.type === "ready") { G.demon.f.contentWindow.postMessage(G.demon.data, "*"); try { G.demon.f.contentWindow.focus(); } catch (err) {} return; }
   const o = G.demon.o; closeDemon();
-  if (d.type === "win") learnDeerWord(o);
+  if (d.type === "win") { if (isClient()) { coopAct({ a: "learn", w: o.w.id, t: o.tech ? o.tech.id : "" }); objective(`🎓 <b>${esc(o.w.kr)}</b> = ${esc(meaning(o.w))}${o.tech ? ` · ${o.tech.icon} ${esc(o.tech.ko)}` : ""}`); setTimeout(() => objective(""), 6000); } else learnDeerWord(o); }
   else if (d.type === "lose") objectiveFlash("😵 퇴마사에게 졌어요 · The demon won — try the lesson again");
   else objectiveFlash("🦌 수업을 그만뒀어요 · Lesson stopped — come back any time");
 });
@@ -1525,7 +1536,8 @@ function deerInteract(){
 function deerUse(it){
   if (it.kind === "pickup") pickUpTrap(it.o);
   else if (it.kind === "place") placeTrap();
-  else if (it.kind === "build") { const w = pickQuizWord(); deerQuiz("buildq", "🔨 탑 짓기 · Build quiz", twoQ(w), () => { if (fort.pads.includes(it.o)) deerBuildTower(it.o); }); }
+  else if (it.kind === "build") { const w = pickQuizWord(); deerQuiz("buildq", "🔨 탑 짓기 · Build quiz", twoQ(w), () => { if (!fort.pads.includes(it.o)) return;
+    if (isClient()) { coopAct({ a: "dbuild", i: fort.pads.indexOf(it.o) }); objectiveFlash("🗼 탑 완성! · Tower built"); } else deerBuildTower(it.o); }); }
   else if (it.kind === "pedestal") openPedestal();
   else if (it.kind === "workshop") openWorkshop();
   else if (it.kind === "lessons") openLessons();
@@ -1544,7 +1556,7 @@ function deerAct(act){
 function renderMissions(){
   const S = G.sanct; if (!S) return;
   const left = Math.max(0, G.waveSize - G.waveKills), perKill = Math.ceil(alienHp(G.wave) / SANCT.towerDmg[towerLv()]), need = left * perKill;
-  const dmg = SANCT.trapDmg[trapLv()], hits = S.traps.length + S.kits, bossHp = G.bossOut ? (G.aliens.find(a => a.special && !a.dead) || { hp: S.bossHp }).hp : S.bossHp;
+  const dmg = SANCT.trapDmg[trapLv()], hits = S.traps.length + S.kits, bossHp = bossLiveHp();
   const next = lessonOptions().find(o => o.tech);
   const row = (ok, html) => `<div class="${ok ? "ok" : ""}">${ok ? "✓" : "•"} ${html}</div>`;
   $("#missions").innerHTML = `<div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words</div>
@@ -1558,10 +1570,10 @@ function renderMissions(){
 function deerTick(dt, rdt){
   if (G.mode !== "deer" || G.over || !G.sanct) return;
   const S = G.sanct;
-  towersTick(dt); trapsTick(dt); runnersTick(dt);
+  if (!isClient()) { towersTick(dt); trapsTick(dt); runnersTick(dt); }   // the partner only mirrors
   for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
   // 🔧 a light over the workshop while your traps can't kill this wave's boss
-  const bossLeft = G.bossOut ? (G.aliens.find(a => a.special && !a.dead) || { hp: 0 }).hp : S.bossHp;
+  const bossLeft = bossLiveHp();
   S.trapBeam.visible = (S.traps.length + S.kits) * SANCT.trapDmg[trapLv()] < bossLeft && S.traps.length + S.kits < trapSlots();
   S.trapBeam.material.opacity = .18 + Math.sin(G.time * 3) * .07;
   S.crystal.rotation.y += rdt * 1.5; S.crystal.position.y = world.pedestal.y + 2.4 + Math.sin(G.time * 2) * .12; S.crystalGlow.material.opacity = S.ammo > 0 ? .7 : .2;
@@ -1576,8 +1588,9 @@ function deerTick(dt, rdt){
   if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
     $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`; $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
   S.missionsT -= rdt; if (S.missionsT <= 0) { S.missionsT = .5; renderMissions(); }
-  // waves
-  if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen) S.nextWaveT = .2; else deerWave(); } return; }
+  // waves (the host runs them)
+  if (isClient()) return;
+  if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen && !G.coop) S.nextWaveT = .2; else deerWave(); } return; }
   if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
   if (S.introTip && G.waveSpawned > 0) { S.introTip = false; helperHide = .1; }   // the aliens are coming: Lumi's intro can go
   if (G.waveKills >= G.waveSize && !G.bossOut) spawnDeerBoss();
@@ -1609,17 +1622,22 @@ function renderShelter(){
 function trainQuiz(){
   const qs = [], used = new Set();
   for (let i = 0; i < 8; i++) { let w = pickQuizWord(); for (let k = 0; k < 5 && used.has(w.id); k++) w = pickQuizWord(); used.add(w.id); qs.push(knownQuestion(w)); }
-  deerQuiz("trainq", "🦌 사슴 훈련 · Training (8)", qs, () => { addHerdDeer(); openShelter(); });
+  deerQuiz("trainq", "🦌 사슴 훈련 · Training (8)", qs, () => { if (isClient()) { coopAct({ a: "train" }); SFX.pickup(); objectiveFlash("🦌 +1 · 무리 · herd"); } else addHerdDeer(); openShelter(); });
 }
-function addHerdDeer(){
-  const S = G.sanct, i = S.herd.length, g = deerMesh(); g.scale.setScalar(.42);
+function herdMesh(i){
+  const g = deerMesh(); g.scale.setScalar(.42);
   g.position.set(world.rally.x - 2.4 + (i % 5) * 1.2, world.rally.y, world.rally.z - 2 + Math.floor(i / 5) % 6 * 1.2); g.rotation.y = Math.PI / 2 + rnd(-.3, .3); g.visible = i < 30;
-  scene.add(g); S.herd.push(g); SFX.pickup(); objectiveFlash(`🦌 +1 · 무리 · herd ${S.herd.length}`); renderMissions();
+  scene.add(g); return g;
 }
-function charge(){
+function addHerdDeer(quiet){
+  const S = G.sanct; S.herd.push(herdMesh(S.herd.length)); if (quiet) return;
+  SFX.pickup(); objectiveFlash(`🦌 +1 · 무리 · herd ${S.herd.length}`); renderMissions();
+}
+function charge(fromPartner){
   const S = G.sanct, n = S.herd.length; if (!n) return;
+  if (isClient()) { coopAct({ a: "charge" }); closePanel(); SFX.charge(); objectiveFlash(`⚔️ 돌격! · ${n} deer charge the hive!`); return; }
   S.herd.forEach((g, i) => { g.visible = true; S.runners.push({ g, wp: 0, x: g.position.x, z: g.position.z, delay: i * .18 }); });
-  S.herd = []; closePanel(); SFX.charge();
+  S.herd = []; if (!fromPartner) closePanel(); SFX.charge();
   objectiveFlash(`⚔️ 돌격! · ${n} deer charge the hive!`); renderMissions();
 }
 function runnersTick(dt){
@@ -1646,19 +1664,90 @@ function runnersTick(dt){
 }
 function hitGate(){
   const S = G.sanct, Hv = world.hive; if (S.hiveBroken) return;
-  S.gateHp = Math.max(0, S.gateHp - 1); burst(new THREE.Vector3(Hv.x, 2.5, Hv.z), 0x9fdcff, 30, 6);
-  Hv.membrane.opacity = .15 + .4 * S.gateHp / S.gateMax;
-  const old = S.gateSign.material.map; S.gateSign.material.map = signTexture(`🚪 ${S.gateHp}/${S.gateMax}`, "외계인 둥지 · hive gate"); S.gateSign.material.needsUpdate = true; old.dispose();
+  S.gateHp = Math.max(0, S.gateHp - 1); burst(new THREE.Vector3(Hv.x, 2.5, Hv.z), 0x9fdcff, 30, 6); fxOut({ b: [Hv.x, 2.5, Hv.z, 0x9fdcff] });
+  gateVisual();
   if (S.gateHp > 0) return;
-  S.hiveBroken = true; G.won = true; SFX.slam(); SFX.kill();
-  for (let i = 0; i < 5; i++) burst(new THREE.Vector3(Hv.x, 3, Hv.z), [0xff4fd8, 0xffffff, 0x9fdcff, 0xffcf5c, 0x7cf7d4][i], 140, 12 + i * 4);
-  Hv.gate.rotation.x = -1.2; Hv.gate.position.y = -1.5; Hv.membrane.opacity = 0;
-  objective("⚔️ 둥지의 문이 무너졌어요! · The hive gate fell — the invasion is over!");
+  S.hiveBroken = true; G.won = true; gateVisual();
   setTimeout(() => { if (G.mode === "deer" && G.running) gameOver(); }, 3000);
 }
+function gateVisual(){   // the gate's sign + membrane follow its HP (host and partner)
+  const S = G.sanct, Hv = world.hive; if (S.shownGate === S.gateHp && S.shownBroken === S.hiveBroken) return;
+  S.shownGate = S.gateHp; Hv.membrane.opacity = .15 + .4 * S.gateHp / S.gateMax;
+  const old = S.gateSign.material.map; S.gateSign.material.map = signTexture(`🚪 ${S.gateHp}/${S.gateMax}`, "외계인 둥지 · hive gate"); S.gateSign.material.needsUpdate = true; old.dispose();
+  if (S.hiveBroken && !S.shownBroken) { SFX.slam(); SFX.kill();
+    for (let i = 0; i < 5; i++) burst(new THREE.Vector3(Hv.x, 3, Hv.z), [0xff4fd8, 0xffffff, 0x9fdcff, 0xffcf5c, 0x7cf7d4][i], 140, 12 + i * 4);
+    Hv.gate.rotation.x = -1.2; Hv.gate.position.y = -1.5; Hv.membrane.opacity = 0;
+    objective("⚔️ 둥지의 문이 무너졌어요! · The hive gate fell — the invasion is over!"); }
+  S.shownBroken = S.hiveBroken;
+}
+// ---- 👥 co-op: what the host sends about the sanctuary, and how the partner mirrors it ----
+const bossLiveHp = () => { const S = G.sanct; if (isClient()) return S.bossLive || 0; const b = G.bossOut && G.aliens.find(a => a.special && !a.dead); return G.bossOut ? (b ? b.hp : 0) : S.bossHp; };
+function deerSnap(){
+  const S = G.sanct;
+  return { sd: [Math.round(S.hp), S.max, S.ammo, S.kits, S.herd.length, S.gateHp, S.gateMax, S.hiveBroken ? 1 : 0, Math.round(bossLiveHp()), G.time - S.lastHit < .5 ? 1 : 0],
+    rn: S.runners.filter(r => r.delay <= 0).map(r => [r2(r.x), r2(r.z)]) };
+}
+function deerFort(){
+  const S = G.sanct, ids = a => a.map(w => w.id);
+  return { ww: ids(G.waveWords), wv: G.wave, tr: S.traps.map(t => [r2(t.x), r2(t.z)]), dw: ids(S.deerWords), tech: [...S.tech], ln: S.learned };
+}
+function applyDeerFort(f){
+  const S = G.sanct; if (!S || !f.dw) return;
+  G.waveWords = f.ww.map(wordById).filter(Boolean);
+  S.deerWords = f.dw.map(wordById).filter(Boolean); S.deerIds = new Set(f.dw); S.techWord = {};
+  TECHS.forEach((t, i) => { if (S.deerWords[i]) S.techWord[t.id] = S.deerWords[i]; }); S.growWords = S.deerWords.slice(TECHS.length);
+  const had = S.tech.size; S.tech = new Set(f.tech); S.learned = f.ln; if (S.tech.size !== had) fort.towers.forEach(towerSignDeer);
+  const tk = JSON.stringify(f.tr); if (tk !== S.trapKey) { S.trapKey = tk; for (const t of S.traps) scene.remove(t.g); S.traps = f.tr.map(([x, z]) => makeTrap(x, z)); }
+  growDeer();
+  if (f.wv > S.briefWave && G.waveWords.length) { if (G.noteOpen || G.backpackOpen) S.pendingBrief = true; else { S.briefWave = f.wv; openBrief(G.waveWords); } }
+}
+function applyDeerSnap(s){
+  const S = G.sanct; if (!S || !s.sd) return;
+  const [hp, max, ammo, kits, herd, gate, gmax, broken, boss, hit] = s.sd;
+  Object.assign(S, { hp, max, ammo, kits, gateHp: gate, gateMax: gmax, hiveBroken: !!broken, bossLive: boss }); if (!G.bossOut) S.bossHp = boss; if (hit) S.lastHit = G.time;
+  renderHP(); gateVisual();
+  while (S.herd.length < herd) S.herd.push(herdMesh(S.herd.length));
+  while (S.herd.length > herd) scene.remove(S.herd.pop());
+  const R = S.runnerMeshes; while (R.length < s.rn.length) R.push(herdMesh(99)); while (R.length > s.rn.length) scene.remove(R.pop());
+  s.rn.forEach(([x, z], i) => { const g = R[i]; g.visible = true; const dx = x - g.position.x, dz = z - g.position.z; if (dx * dx + dz * dz > .001) g.rotation.y = Math.atan2(dx, dz); g.position.set(x, world.groundY(x, z) + Math.abs(Math.sin(G.time * 14 + x)) * .25, z); });
+  if (S.pendingBrief && !G.noteOpen && !G.backpackOpen) { S.pendingBrief = false; S.briefWave = G.wave; openBrief(G.waveWords); }
+}
+function deerHostAction(ev){
+  const S = G.sanct; if (!S) return;
+  const who = "👥 파트너 · partner";
+  if (ev.a === "ammo") { S.ammo += ammoPerQuiz(); objectiveFlash(`${who}: 💎 +${ammoPerQuiz()} ammo`); }
+  else if (ev.a === "kit") { if (S.traps.length + S.kits < trapSlots()) { S.kits++; objectiveFlash(`${who}: 📦 +1 trap`); } }
+  else if (ev.a === "place") placeTrap({ x: ev.x, z: ev.z });
+  else if (ev.a === "pick") { const t = S.traps[ev.i]; if (t) pickUpTrap(t); }
+  else if (ev.a === "dbuild") { const p = fort.pads[ev.i]; if (p) deerBuildTower(p); }
+  else if (ev.a === "train") addHerdDeer();
+  else if (ev.a === "charge") charge(true);
+  else if (ev.a === "learn") { const w = wordById(ev.w), tech = TECHS.find(t => t.id === ev.t) || null;
+    if (w && !G.unlocked.includes(w) && (!tech || (G.coins >= techCost() && !S.tech.has(tech.id)))) learnDeerWord({ w, tech }); }
+}
+// ---- 💬 chat (co-op): Enter opens it, Enter sends, Esc cancels ----
+function addChat(who, text){
+  const d = document.createElement("div"); d.innerHTML = `<b>${esc(who)}</b> ${esc(text)}`; $("#chatLog").appendChild(d);
+  while ($("#chatLog").children.length > 7) $("#chatLog").firstChild.remove();
+  setTimeout(() => d.classList.add("old"), 15000);
+}
+function openChat(){
+  G.chatting = true; for (const k in keys) keys[k] = false; G.firing = false;
+  $("#chatBox").hidden = false; $("#chatInput").value = ""; document.exitPointerLock && document.exitPointerLock(); setTimeout(() => $("#chatInput").focus(), 0);
+}
+function closeChat(){ G.chatting = false; $("#chatBox").hidden = true; $("#chatInput").blur(); G.panelClosedAt = performance.now(); if (G.running && !G.noteOpen) $("#clickToPlay").hidden = false; }
+$("#chatInput").addEventListener("keydown", e => {
+  e.stopPropagation();
+  if (e.key === "Escape") { closeChat(); return; }
+  if (e.key !== "Enter" || e.isComposing) return;   // (Korean IME: Enter finishes the syllable first)
+  const t = $("#chatInput").value.trim().slice(0, 200);
+  if (t && G.coop) { if (isHost()) fxOut({ chat: t }); else coopAct({ a: "chat", t }); addChat("나 · me", t); }
+  closeChat();
+});
 function clearDeer(){
   const S = G.sanct;
   if (S) { for (const g of S.herd || []) scene.remove(g); for (const r of S.runners || []) scene.remove(r.g);
+    for (const g of S.runnerMeshes || []) scene.remove(g);
     for (const t of S.traps) scene.remove(t.g); if (S.trapBeam) scene.remove(S.trapBeam); if (S.deerMesh) scene.remove(S.deerMesh); (S.signs || []).forEach(s => scene.remove(s)); if (S.crystal) scene.remove(S.crystal); }
   if (G.demon) { G.demon.f.remove(); G.demon = null; }
   G.sanct = null; G.waveWords = [];
@@ -1716,6 +1805,8 @@ function hostMsg(d){
     else if (ev.a === "event") { const evn = fort.events[ev.i]; if (evn) useEvent(evn); }
     else if (ev.a === "nuke") { const w = wordById(ev.w); if (w && G.up.nuke) { const keep = G.loaded; G.loaded = w; G.nukeCd = 0; nukeWord(); G.loaded = keep; } }
     else if (ev.a === "note") { G.notePass.client = true; tryFinishNote(); }
+    else if (ev.a === "chat") addChat("👥 파트너 · partner", String(ev.t || "").slice(0, 200));
+    else if (G.mode === "deer" && ["ammo", "kit", "place", "pick", "dbuild", "train", "charge", "learn"].includes(ev.a)) deerHostAction(ev);
     else if (ev.a === "free") { const h = partner.stuck; partner.stuck = null; for (const o of G.dogs) o.cd = Math.max(o.cd, 2); if (h && h !== true) { h.cd = 4; const dx = h.x - partner.pos.x, dz = h.z - partner.pos.z, dd = Math.hypot(dx, dz) || 1; world.moveEntity(h, dx / dd * 3, dz / dd * 3, .35, 0); } }
   }
 }
@@ -1739,17 +1830,19 @@ function hostSnapshot(){
     n: G.note ? [r2(G.note.s.position.x), r2(G.note.y), r2(G.note.s.position.z), G.note.w.id, G.notePass.client ? 1 : 0] : null,
     c: G.mercs.map(m => [r2(m.x), r2(m.y), r2(m.z), r2(m.g.rotation.y), m.word.id]),
     dr: G.deer ? [r2(G.deer.x), r2(G.deer.y), r2(G.deer.z), r2(G.deer.g.rotation.y), r2(deerSlow())] : null,
+    ...(G.mode === "deer" && G.sanct ? deerSnap() : {}),
     fx: G.fxQ.splice(0, 80) };
 }
 function hostFort(){
   return { t: "f", pads: fort.pads.map(p => [r2(p.x), r2(p.z)]), towers: fort.towers.map(t => [r2(t.x), r2(t.z), t.word.id]),
     m: fort.merchant ? [r2(fort.merchant.x), r2(fort.merchant.z)] : null, ev: fort.events.map(e2 => [e2.kind, r2(e2.x), r2(e2.z)]),
-    words: G.unlocked.map(w => w.id), up: G.up, beam: [r2(beam.position.x), r2(beam.position.z), beam.visible ? 1 : 0], zone: G.zone };
+    words: G.unlocked.map(w => w.id), up: G.up, beam: [r2(beam.position.x), r2(beam.position.z), beam.visible ? 1 : 0], zone: G.zone,
+    ...(G.mode === "deer" && G.sanct ? deerFort() : {}) };
 }
 // ---------------- client ----------------
 function clientMsg(d){
   if (!d || !d.t) return;
-  if (d.t === "start") { Object.assign(settings, d.sel); startGame(false, "fortress"); return; }
+  if (d.t === "start") { Object.assign(settings, d.sel); startGame(false, d.mode || "fortress"); return; }
   if (d.t === "s") { (G.fxIn || (G.fxIn = [])).push(...(d.fx || [])); G.snap = d; }   // keep every event, even if snapshots arrive faster than frames
   else if (d.t === "f") applyFort(d);
   else if (d.t === "over") { $("#overStats").innerHTML = d.stats; G.won = false;
@@ -1758,6 +1851,7 @@ function clientMsg(d){
     $("#over .logo").textContent = d.title || "🏰 Game over"; setTimeout(() => { $("#hud").hidden = true; $("#over").hidden = false; }, 700); }
 }
 function applyFort(f){
+  if (G.mode === "deer") applyDeerFort(f);
   const key = JSON.stringify([f.pads, f.towers, f.m, f.ev, f.zone]);
   // words / upgrades always
   const before = G.unlocked.length;
@@ -1773,6 +1867,7 @@ function applyFort(f){
   if (f.m) spawnMerchant({ x: f.m[0], z: f.m[1] });
   f.ev.forEach(([kind, x, z], i) => spawnEvent(kind, i, { x, z }));
   G.quietBuild = false;
+  if (G.mode === "deer") fort.towers.forEach(t => { t.kills = 0; towerSignDeer(t); });
 }
 function clientPuppets(dt, rdt){
   const s = G.snap; if (!s) return;
@@ -1838,6 +1933,7 @@ function clientSync(dt, rdt){
       G.note = { s: sp, y: s.n[1], t: 0, w: wordById(s.n[3]), passed: false }; }
     G.note.s.position.x = s.n[0]; G.note.s.position.z = s.n[2];
   } else if (G.note && (!s.n || s.n[4])) { scene.remove(G.note.s); G.note = null; }
+  if (G.mode === "deer") applyDeerSnap(s);
   // events from the host
   const fxList = (G.fxIn || []).splice(0);
   for (const ev of fxList) {
@@ -1849,6 +1945,7 @@ function clientSync(dt, rdt){
     else if (ev.blast) { G.shake = 1.2; SFX.slam(); const v = $("#vignette"); v.style.boxShadow = "inset 0 0 400px 200px rgba(255,230,160,.8)"; setTimeout(() => v.style.boxShadow = "", 350);
       burst(new THREE.Vector3(ev.blast[0], ev.blast[1] + 1.5, ev.blast[2]), 0xffcf5c, 150, 18); G.note && (G.note.passed = false);
       objective("💥 보스 처치! 쪽지를 읽으세요 (둘 다 통과해야 해요) · Boss down — read the note 📜 (both of you must pass it)"); }
+    else if (ev.chat) addChat("👥 파트너 · partner", String(ev.chat).slice(0, 200));
     else if (ev.hurt) hurtFx();
     else if (ev.heal) { SFX.heal(); floater(player.pos.clone().add(new THREE.Vector3(0, .3, -1)), "+20 HP", "#6dff8a", 22); }
     else if (ev.bite) biteRemote();
@@ -1863,7 +1960,7 @@ function biteRemote(){
   renderQuiz();
 }
 function coopTick(dt, rdt){
-  if (!G.coop || G.mode !== "fortress" || G.over) return;
+  if (!G.coop || (G.mode !== "fortress" && G.mode !== "deer") || G.over) return;
   const net = G.coop.net;
   // partner avatar
   if (partner.avatar) { partner.avatar.visible = partner.seen; partner.avatar.position.lerp(partner.target, Math.min(1, rdt * 12)); partner.avatar.rotation.y = partner.yaw + Math.PI;
@@ -1902,8 +1999,8 @@ $("#hostBtn").onclick = () => {
 };
 $("#coopStart").onclick = () => {
   if (!G.coop || G.coop.role !== "host") return;
-  G.coop.net.send({ t: "start", sel: { ch: settings.ch, cls: settings.cls, star: settings.star } });
-  startGame(false, "fortress");
+  G.coop.net.send({ t: "start", mode: "deer", sel: { ch: settings.ch, cls: settings.cls, star: settings.star } });
+  startGame(false, "deer");
 };
 $("#joinBtn").onclick = () => {
   const code = $("#joinCode").value.trim().toUpperCase(); if (!/^[A-Z]{4}$/.test(code)) { coopStatus("4글자 코드를 입력하세요 · Enter the 4-letter code"); return; }
@@ -1913,12 +2010,12 @@ $("#joinBtn").onclick = () => {
   net.onStatus = (k, x) => { if (k === "open") coopStatus("✅ 연결됐어요! 호스트가 시작하길 기다려요 · Connected — waiting for the host to start");
     if (k === "closed") { coopStatus(x === 4004 ? "그 방은 없어요 · No room with that code" : x === 4000 ? "호스트가 나갔어요 · The host left" : "연결이 끊겼어요 · Disconnected");
       if (G.running && isClient()) { G.over = true; G.running = false; objective("👥 호스트 연결이 끊겼어요 · Lost the host"); setTimeout(() => { $("#hud").hidden = true; $("#menu").hidden = false; renderMenu(); }, 2000); } } };
-  net.onMsg = d => { if (d && d.t === "start") { Object.assign(settings, d.sel); startGame(false, "fortress"); } };
+  net.onMsg = d => { if (d && d.t === "start") { Object.assign(settings, d.sel); startGame(false, d.mode || "fortress"); } };
 };
 
 /* ================================ start / pause / over ================================ */
 function resetRun(){
-  clearFortifications(false); clearDeer(); $("#interact").hidden = true;
+  clearFortifications(false); clearDeer(); $("#interact").hidden = true; G.chatting = false; $("#chatBox").hidden = true;
   removeHounds(false);
   (G.mercs || []).forEach(m => scene.remove(m.g)); if (G.deer) scene.remove(G.deer.g);
   if (G.note) scene.remove(G.note.s); $("#note").hidden = true; beam.visible = false;
@@ -1948,6 +2045,8 @@ function startGame(tutorial, mode = "district"){
   else if (mode === "fortress") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); G.waveActive = true; setupZone(0); startWave();
     helperShow(`첫 단어: <b class="typed">${esc(w0.kr)}</b> <small>= ${esc(meaning(w0))} · walk to a 🔨 pad + E to build a tower (quiz)</small>`, 7); say([wordClip(w0.id)]); }
+  else if (mode === "deer" && isClient()) { pedestal.visible = false; player.hasGun = false; gun.visible = false;
+    deerStart(true); helperShow("👥 파트너의 성소에 들어왔어요 · You joined your partner's sanctuary — everything you build counts for both. <b>Enter</b> = chat", 8); }
   else if (mode === "deer") { pedestal.visible = false; player.hasGun = false; gun.visible = false;
     deerStart();
     helperShow("🦌 <small>Protect the baby deer! 🔨 build towers · 💎 make ammo · 🔧 build traps (the only thing that hurts the boss) · 🦌 learn from the deer. The missions are top left.</small>", 1e9); G.sanct.introTip = true; }   // stays up until the first aliens come
@@ -1966,7 +2065,7 @@ function startGame(tutorial, mode = "district"){
   if (!G.noteOpen) lock();   // (the deer sanctuary opens with the new-word card: the mouse stays free for it)
 }
 // co-op fortress never freezes or slows the world: menus/panels only cover your own screen
-const liveCoop = () => !!(G.coop && G.mode === "fortress");
+const liveCoop = () => !!(G.coop && (G.mode === "fortress" || G.mode === "deer"));
 function pauseGame(){ G.paused = true; G.firing = false; for (const k in keys) keys[k] = false;
   $("#pauseCoop").hidden = !liveCoop(); $("#pause").hidden = false; $("#clickToPlay").hidden = true; document.exitPointerLock && document.exitPointerLock(); }
 function resumeGame(){ G.paused = false; $("#pause").hidden = true; lock(); }
@@ -2019,8 +2118,17 @@ const UI = {
   again: "↻ Again", menu: "Menu", click: "Click or press any key to play",
   controls: "<b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> dash · <b>Mouse</b> aim/shoot · <b>Tab</b> backpack (time slows) · <b>1–4</b> recent ammo · <b>R</b> reload · <b>Q</b> hear the word again · <b>Esc</b> pause · <b>F11</b> fullscreen",
 };
+// The website only offers the deer sanctuary (+ its co-op). The older modes are still here: the desktop app
+// (file://) shows them, and so does the website with ?classic in the address.
+const CLASSIC = location.protocol === "file:" || /[?&]classic\b/.test(location.search);
 function renderMenu(){
   document.querySelectorAll("[data-i]").forEach(el => { const k = el.dataset.i; if (UI[k] != null) el.innerHTML = UI[k]; });
+  for (const id of ["#playBtn", "#fortBtn", "#escBtn", "#survBtn", "#tutBtn"]) $(id).hidden = !CLASSIC;
+  for (const id of ["#labelSel", "#bpSel", "#subsSel"]) $(id).closest("label").hidden = !CLASSIC;
+  if (!CLASSIC) {
+    $("[data-i=tagline]").innerHTML = "아기 얼음 사슴을 지키면서 단어를 배워요. 탑, 탄약, 함정, 사슴 군대 — 모두 퀴즈로 만들어요.<br><small>Protect the baby ice deer and learn words: towers, ammo, traps and a deer army — all built from quizzes.</small>";
+    $("[data-i=controls]").innerHTML = "<b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> dash · <b>E</b> use · <b>Tab</b> your words · <b>Enter</b> chat (co-op) · <b>Esc</b> pause · <b>F11</b> fullscreen";
+  }
   const done = store.get("wa_tutorial_done", false), best = store.get("wa_best", 0);
   $("#playBtn").textContent = done ? `▶ 시작 · Play${best ? "  (best ★" + best + ")" : ""}` : "▶ 시작 · Play (starts with the tutorial)";
   $("#langSel").innerHTML = D.langs.map(l => `<option value="${l.code}">${esc(l.native)}</option>`).join(""); $("#langSel").value = settings.lang;
