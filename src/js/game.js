@@ -1621,12 +1621,12 @@ function duelBar(){
   const S = G.sanct, H = S.duelHits || { me: 0, p: 0 }, need = G.coop ? 8 : 4, done = Math.min(need, H.me + H.p);
   setTex(S.arena.bar, textTex(`👑 ${"■".repeat(need - done)}${"□".repeat(done)}`, "", 1024, 96));
 }
-function startDuelLocal(){
+function startDuelLocal(id){
   const S = G.sanct; if (G.duel) return;
   if (G.demon) { G.pendingDuel = true; return; }   // never pull someone out of a deer lesson: the duel waits
   if (G.demon) closeDemon(); if (G.noteOpen) closePanel(); if (G.backpackOpen) closeBackpack(false);
   const A = buildArena(), side = isClient() ? "right" : "left", x = DUEL[side];
-  G.duel = { side, x, qs: duelQuestions(), i: 0, zapT: 0, back: { x: player.body.x, y: player.body.y, z: player.body.z, yaw: player.yaw } };
+  G.duel = { id: id || S.duelId || 0, side, x, qs: duelQuestions(), i: 0, zapT: 0, back: { x: player.body.x, y: player.body.y, z: player.body.z, yaw: player.yaw } };
   S.duelHits = { me: 0, p: 0 };
   Object.assign(player.body, { x, y: DUEL.y, z: DUEL.z, vy: 0 }); player.feet = DUEL.y; player.pos.set(x, DUEL.y + 1.7, DUEL.z); player.vel.set(0, 0, 0);
   player.yaw = Math.PI; player.pitch = .08; player.hasGun = true; gun.visible = true; G.firing = false;
@@ -1636,7 +1636,8 @@ function startDuelLocal(){
   setTimeout(() => { if (G.duel) objective(""); }, 6000);
 }
 function finishDuelLocal(){
-  const S = G.sanct, D = G.duel; if (!D) return;
+  const S = G.sanct, D = G.duel; if (!D || D.finishing) return;
+  D.finishing = true; G.doneDuelId = D.id;   // (the partner won't be pulled back into this one)
   const A = S.arena; for (let i = 0; i < 5; i++) burst(A.boss.aimPoint(), [0x9fdcff, 0xffffff, 0xff9a3a, 0x7cf7d4, 0xffcf5c][i], 140, 14 + i * 4);
   SFX.slam(); SFX.kill(); G.shake = 1;
   setTimeout(() => {
@@ -1683,9 +1684,12 @@ function zapMe(){   // ⚡ purely for fun: blue flash, shake, a few bolts, 0.9 s
 }
 function checkDuelEnd(){
   const S = G.sanct, H = S.duelHits;
-  if (!G.duel || H.me < 4 || (G.coop && H.p < 4)) { if (G.coop) fxOut({ duelbar: [H.me, H.p] }); return; }
+  // a partner who is away (nothing heard for 8 s) or gone doesn't keep the host waiting
+  const partnerHere = G.coop && G.coop.net.partner && performance.now() - (partner.lastMsg || 0) < 8000;
+  if (!G.duel || H.me < 4 || (G.coop && H.p < 4 && partnerHere)) { if (G.coop) fxOut({ duelbar: [H.me, H.p] }); return; }
+  if (G.coop && H.p < 4) helperShow("👥 파트너가 자리에 없어요 <small>Your partner is away — the duel ends without them.</small>", 6);
   if (G.coop) fxOut({ duel: 0 });
-  finishDuelLocal(); G.bossOut = false; S.nextWaveT = 5; G.coins += 20; renderTop();
+  S.duelOn = false; finishDuelLocal(); G.bossOut = false; S.nextWaveT = 5; G.coins += 20; renderTop();
 }
 // ---- interactions ----
 function deerInteract(){
@@ -1861,7 +1865,8 @@ function deerTick(dt, rdt){
   if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen && !G.coop) S.nextWaveT = .2; else deerWave(); } return; }
   if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
   if (S.introTip && G.waveSpawned > 0) { S.introTip = false; helperHide = .1; }   // the aliens are coming: Lumi's intro can go
-  if (S.duelT > 0) { S.duelT -= dt; if (S.duelT <= 0) { if (G.coop) fxOut({ duel: 1 }); startDuelLocal(); } }
+  if (S.duelT > 0) { S.duelT -= dt; if (S.duelT <= 0) { S.duelId = (S.duelId || 0) + 1; S.duelOn = true; if (G.coop) fxOut({ duel: 1 }); startDuelLocal(S.duelId); } }
+  if (G.duel && G.duel.i >= G.duel.qs.length && !G.duel.finishing) { S.duelChk = (S.duelChk || 0) - rdt; if (S.duelChk <= 0) { S.duelChk = 1; checkDuelEnd(); } }   // host done: keep checking (partner away?)
   if (G.waveKills >= G.waveSize && !G.bossOut) beginDuel();
   const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(30, 12 + G.wave * 2);
   G.spawnT -= dt;
@@ -1898,7 +1903,7 @@ function renderShelter(){   // no explanations: the numbers + watching the herd 
 }
 const CAMPS = [[3, 10, 60], [4, 22, 120], [5, 34, 200]];   // [gold-road waypoint, defenders, 💰 reward] — about what the herd holds at stages 1, 3, 5
 const MARCH_EVERY = 30;
-const DEER_LOOT = 20;   // 💎 every deer that reaches an enemy brings back ammo for the towers
+const DEER_LOOT = 15;   // 💎 every deer that reaches an enemy brings back ammo for the towers
 function deerLoot(x, y, z){ const S = G.sanct; S.ammo += DEER_LOOT; floater(new THREE.Vector3(x, y + 2.2, z), `+${DEER_LOOT} 💎`, "#c9a2ff", 22, 1); }
 function makeCamp(wp, n, gold){
   n = Math.max(2, Math.round(n * armyScale()));   // camp size follows the word list too
@@ -2015,7 +2020,7 @@ const bossLiveHp = () => { const S = G.sanct; if (isClient()) return S.bossLive 
 function deerSnap(){
   const S = G.sanct;
   return { sd: [Math.round(S.hp), S.max, S.ammo, S.kits, S.herd.length, S.gateHp, S.gateMax, S.hiveBroken ? 1 : 0, Math.round(bossLiveHp()), G.time - S.lastHit < .5 ? 1 : 0,
-      Math.ceil(S.marchT), S.camps.map(c => c.conquered ? -1 : c.alive), S.catKits],
+      Math.ceil(S.marchT), S.camps.map(c => c.conquered ? -1 : c.alive), S.catKits, S.duelOn ? S.duelId : 0],
     rn: S.runners.filter(r => r.delay <= 0).map(r => [r2(r.x), r2(r.z)]) };
 }
 function deerFort(){
@@ -2035,7 +2040,10 @@ function applyDeerFort(f){
 }
 function applyDeerSnap(s){
   const S = G.sanct; if (!S || !s.sd) return;
-  const [hp, max, ammo, kits, herd, gate, gmax, broken, boss, hit, march, camps, catKits] = s.sd; S.catKits = catKits || 0;
+  const [hp, max, ammo, kits, herd, gate, gmax, broken, boss, hit, march, camps, catKits, duelId] = s.sd; S.catKits = catKits || 0;
+  // the duel state comes with every snapshot, so a partner whose tab was asleep still gets pulled in (or out)
+  if (duelId && !G.duel && G.doneDuelId !== duelId) { G.bossOut = true; startDuelLocal(duelId); }
+  else if (!duelId && G.duel && !G.duel.finishing) finishDuelLocal();
   S.marchT = march; (camps || []).forEach((v, i) => { const c = S.camps[i]; if (!c) return; if (v < 0) { if (!c.conquered) { c.conquered = true; burst(new THREE.Vector3(c.x, 3, c.z), 0xffcf5c, 90, 9); } } else c.alive = v; campVisual(c); });
   Object.assign(S, { hp, max, ammo, kits, gateHp: gate, gateMax: gmax, hiveBroken: !!broken, bossLive: boss }); if (!G.bossOut) S.bossHp = boss; if (hit) S.lastHit = G.time;
   renderHP(); gateVisual();
@@ -2131,6 +2139,7 @@ function revive(who){ who.downed = false; who.hp = 40; who.bleedT = 0; if (who =
 // ---------------- host ----------------
 function hostMsg(d){
   if (!d) return;
+  partner.lastMsg = performance.now();
   if (d.s) { const [x, y, z, yaw, pitch, dash, rev] = d.s; partner.pos.set(x, y + 1.7, z); partner.feet = y; partner.yaw = yaw; partner.pitch = pitch; partner.dashing = dash ? .2 : 0; partner.target.set(x, y, z); partner.seen = true; partner.reviving = rev || 0; }
   for (const ev of d.ev || []) {
     if (ev.a === "shot") { const a = G.aliens.find(x => x.id === ev.id && !x.dead); if (!a || !a.word) continue;
@@ -2289,7 +2298,7 @@ function clientSync(dt, rdt){
       objective("💥 보스 처치! 쪽지를 읽으세요 (둘 다 통과해야 해요) · Boss down — read the note 📜 (both of you must pass it)"); }
     else if (ev.chat) addChat("👥 파트너 · partner", String(ev.chat).slice(0, 200));
     else if (ev.cp && G.sanct) { const c = ev.cp; launchBoulder(c[0], c[1], c[2], c[3], c[4], c[5], 0); }
-    else if (ev.duel === 1) startDuelLocal();
+    else if (ev.duel === 1) { /* the duel id in every snapshot starts it (applyDeerSnap) */ }
     else if (ev.duel === 0) finishDuelLocal();
     else if (ev.zap) zapMe();
     else if (ev.duelbar && G.sanct && G.duel) { G.sanct.duelHits = { me: ev.duelbar[1], p: ev.duelbar[0] }; duelBar(); }
