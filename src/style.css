@@ -205,8 +205,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #coopStatus{font-size:14px;color:var(--dim);margin-top:6px;min-height:18px}
 #coopStatus .code{font-size:26px;letter-spacing:4px;color:var(--gold)}
 
-/* 🏦 heist */
-.btn.heist{font-size:20px;background:linear-gradient(180deg,#ffcf5c,#3f8a3a);border-color:#fff0b8;color:#0d1a05;font-weight:800}
+/* 🦌 deer sanctuary: menu button + new-word card */
+.btn.deer{font-size:20px;background:linear-gradient(180deg,#bfe8ff,#3f7fb8);border-color:#e8f7ff;color:#04121f;font-weight:800}
 #note .brief{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 #note .brief .bRow{display:grid;grid-template-columns:auto 1fr auto;column-gap:10px;row-gap:2px;align-items:center;background:#fff8e6;border:2px solid #b08a4a;border-radius:10px;padding:8px 12px}
 #note .brief .bKr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
@@ -216,3 +216,11 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #note .brief .bRow small{color:#6a4a20;white-space:nowrap;align-self:start;margin-top:6px}
 #note .brief .bRow button{font-size:18px;background:none;border:1px solid #b08a4a;border-radius:8px;cursor:pointer;padding:2px 8px}
 #note .brief .bRow .k{display:inline-block;width:24px;height:24px;border-radius:6px;background:#2a1d0c;color:#f8ecd0;font-size:14px;text-align:center;line-height:24px;align-self:start;margin-top:6px}
+
+/* 🦌 deer sanctuary */
+#missions{position:fixed;left:14px;top:14px;z-index:4;max-width:min(430px,46vw);background:rgba(8,16,30,.72);border:1px solid rgba(159,220,255,.35);border-radius:12px;padding:8px 12px;font-size:13.5px;line-height:1.45;color:#dfeaff;pointer-events:none}
+#missions .mHead{font-weight:800;color:#9fdcff;margin-bottom:2px}
+#missions .ok{color:#7cf7b0}
+#missions small{color:#8aa0c0}
+#note .dList{display:flex;flex-direction:column;gap:4px;margin:8px 0;font-size:15px;color:#4a3210}
+#lessonFrame{position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:30;background:#1a0b2e}

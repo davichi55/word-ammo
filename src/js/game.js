@@ -7,7 +7,7 @@ import { RenderPass } from "../../node_modules/three/examples/jsm/postprocessing
 import { UnrealBloomPass } from "../../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "../../node_modules/three/examples/jsm/postprocessing/OutputPass.js";
 import { buildWorld } from "./world.js";
-import { buildHeistWorld } from "./heist-world.js";
+import { buildSanctuaryWorld } from "./sanctuary-world.js";
 import { Alien, Orb, glowTexture } from "./enemies.js";
 import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js";
 import { Net } from "./coop.js";
@@ -18,9 +18,9 @@ const store = { get(k, d){ try { const v = localStorage.getItem(k); return v == 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
-const shirtMode = () => G.mode === "escape" || G.mode === "fortress" || G.mode === "heist";
-// the words on keys 1–9: in a heist only this wave's new words, elsewhere every word you own
-const ammoWords = () => G.mode === "heist" ? (G.waveWords || []) : (G.unlocked || []);
+const shirtMode = () => G.mode === "escape" || G.mode === "fortress" || G.mode === "deer";
+// the words on keys 1–9 (every word you own)
+const ammoWords = () => G.unlocked || [];
 const CAT = Object.fromEntries(D.categories.map(c => [c.id, c]));
 const POS_KO = { noun: "명사", verb: "동사", adjective: "형용사", adverb: "부사", other: "기타" };
 
@@ -51,15 +51,15 @@ composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .8, .5, .72);
 composer.addPass(bloom); composer.addPass(new OutputPass());
 addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
-// two maps, one shown at a time: the old town (district, escape, survival, fortress) and the bank hill (heist)
-const districtRoot = new THREE.Group(), heistRoot = new THREE.Group(); scene.add(districtRoot, heistRoot); heistRoot.visible = false;
+// two maps, one shown at a time: the old town (district, escape, survival, fortress) and the snowy valley (deer sanctuary)
+const districtRoot = new THREE.Group(), deerRoot = new THREE.Group(); scene.add(districtRoot, deerRoot); deerRoot.visible = false;
 const districtWorld = buildWorld(districtRoot);
-let heistWorld = null;   // built the first time a heist starts
+let deerWorld = null;   // built the first time the sanctuary is played
 let world = districtWorld;
 scene.background = world.env.bg; scene.fog = world.env.fog;
-const getHeistWorld = () => heistWorld || (heistWorld = buildHeistWorld(heistRoot));
+const getDeerWorld = () => deerWorld || (deerWorld = buildSanctuaryWorld(deerRoot));
 function useWorld(w){
-  world = w; G.world = w; districtRoot.visible = w === districtWorld; heistRoot.visible = w !== districtWorld;
+  world = w; G.world = w; districtRoot.visible = w === districtWorld; deerRoot.visible = w !== districtWorld;
   scene.background = w.env.bg; scene.fog = w.env.fog; mmStatic = null;
 }
 
@@ -122,7 +122,7 @@ const G = {
   wakeAlien(a){ if (!a.wake()) return; ensureWord(a); G.quietT = 0;
     for (const o of G.aliens) if (o !== a && o.state === "idle" && !o.dead && o.pos.distanceTo(a.pos) < 11 && Math.abs(o.pos.y - a.pos.y) < 2) { o.wake(); ensureWord(o); } },
   spawnOrb(from, a){ const target = (G.targetFor ? G.targetFor(a) : player).pos.clone(); target.y -= .4; G.orbs.push(new Orb(scene, from, target)); SFX.orb(); },
-  slam(center, r, a){ if (G.mode === "heist") { heistSlam(center, r, a); return; } SFX.slam(); G.shake = .5; burst(center.clone().setY(.2), 0xff2244, 40, 7); fxOut({ b: [center.x, center.y + .2, center.z, 0xff2244] });
+  slam(center, r, a){ if (G.mode === "deer") { deerSlam(center, r, a); return; } SFX.slam(); G.shake = .5; burst(center.clone().setY(.2), 0xff2244, 40, 7); fxOut({ b: [center.x, center.y + .2, center.z, 0xff2244] });
     for (const T of G.targets()) if (!T.dashing && Math.hypot(T.pos.x - center.x, T.pos.z - center.z) < r && Math.abs(T.feet - center.y) < 1.5) {
       hurt(24, center, T); if (T === player) { const d = player.pos.clone().sub(center).setY(0).normalize(); player.vel.addScaledVector(d, 9); } } },
   hurt: (n, from, t) => hurt(n, from, t),
@@ -132,7 +132,7 @@ window.__G = G;   // debugging handle
 
 /* ================================ word picking (spaced repetition light) ================================ */
 function nextWeakWord(){
-  if (G.mode === "heist" && G.waveWords && G.waveWords.length) return pick(G.waveWords);   // a heist wave only wears its 4 new words
+  if (G.mode === "deer" && G.unlocked.length) return pick(G.waveWords && G.waveWords.length ? G.waveWords : G.unlocked);   // shirts show this wave's words
   if (shirtMode() && G.unlocked.length) return pick(G.unlocked);   // 2 words = 50/50, 3 = 33% each …
   if (G.mode === "survival" && G.unlocked.length) {
     const L = G.unlocked, newest = L[L.length - 1];
@@ -230,7 +230,7 @@ function fire(){
   if (h && h.dog) { SFX.shot(); if (isClient()) { coopAct({ a: "hound", i: G.dogs.indexOf(h.dog) }); floater(h.point, "🐕", "#ffd23f", 22); } else hitHound(h.dog, h.point); tracer(from, h.point, 0xffd23f); hitmarker(false); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return; }
   if (h) {
     to = h.point;
-    const a = h.alien, good = (a.special && !a.locks) || G.loaded.id === a.word.id;   // a locked heist boss needs its lock's word
+    const a = h.alien, good = a.special || G.loaded.id === a.word.id;
     if (isClient()) {   // co-op client: show the hit now, let the host apply it
       coopAct({ a: "shot", id: a.id, head: h.head ? 1 : 0, w: G.loaded.id });
       if (good) { SFX.shotGood(); burst(h.point, 0x7cf7d4, 26, 6); hitmarker(true); floater(h.point, h.head ? "💥" : "✓", "#7cf7d4", 26); }
@@ -238,7 +238,6 @@ function fire(){
       tracer(from, to, good ? 0x7cf7d4 : 0xb8b0ff, true); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return;
     }
     G.wakeAlien(a);
-    if (a.locks) { bossLockHit(a, h.point, good); tracer(from, h.point, good ? 0x7cf7d4 : 0xb8b0ff); if (G.rounds <= 0) setTimeout(() => { if (G.rounds <= 0) startReload(); }, 250); return; }
     if (a.firstShotWrong === null) a.firstShotWrong = !good;
     if (good) {
       SFX.shotGood(); const dmg = h.head ? 55 : 36; a.stagger = a.special ? .08 : .3;
@@ -254,8 +253,7 @@ function fire(){
       }
     } else {
       SFX.shot(); SFX.resist(); a.damage(2); a.wrongHits++;
-      // wrong ammo shows the word it IS weak to — a disguised alien only gives it away after 3 misses (recall first!)
-      burst(h.point, 0x9a93c2, 10, 3); hitmarker(false); floater(h.point, a.disguised && a.wrongHits < 3 ? "✗" : a.word.kr, "#ffcf5c", 30, 1.8, "w" + a.id);
+      burst(h.point, 0x9a93c2, 10, 3); hitmarker(false); floater(h.point, a.word.kr, "#ffcf5c", 30, 1.8, "w" + a.id);   // wrong ammo shows the word it IS weak to
       if (!a.announced && !(G.tut && G.tut.step === "shoot") && !shirtMode()) announce(a);
       if (G.tut && G.tut.step === "shoot") tutNext("listen");
     }
@@ -297,12 +295,12 @@ function onKill(a, byTower = false){
   if (a.wrongHits === 0 && quick) G.perfect++;
   bpUnlockCheck();
   // health drops: rare in the horde modes (they'd clutter the map), a bit more when you're low
-  const dropP = G.mode === "heist" ? 0 : (shirtMode() ? .06 : G.mode === "survival" ? .12 : .25) + (player.hp < 35 ? .1 : 0);   // heist: you can't get hurt
+  const dropP = G.mode === "deer" ? 0 : (shirtMode() ? .06 : G.mode === "survival" ? .12 : .25) + (player.hp < 35 ? .1 : 0);   // deer sanctuary: you can't get hurt
   if (Math.random() < dropP) spawnPickup(a.pos.clone());
   if (G.speaking === a) { $("#helperText").dataset.for = ""; helperHide = 1.2; }
   if (G.tut) { if (G.tut.step === "kill") tutNext("dodge"); else if (G.tut.step === "dodge" || G.tut.step === "dodge2") tutNext("done"); }
   else if (G.mode === "escape") { if (a.special) specialKill(a); renderTop(); }
-  else if (G.mode === "heist") { if (a.special) heistBossKill(a); else G.waveKills++; renderTop(); }
+  else if (G.mode === "deer") { if (a.special) deerBossKill(a); else G.waveKills++; renderTop(); }
   else if (G.mode === "fortress") { if (a.special) bossKill(a); else { G.waveKills++; G.coins++; } renderTop(); }
   else if (G.mode === "survival") { if (G.kills >= G.nextUnlockAt) { G.nextUnlockAt += 5; unlockWord(); } renderTop(); }
   else { renderTop(); if (!G.aliens.some(x => !x.dead)) setTimeout(victory, 1600); }
@@ -341,7 +339,7 @@ function spawnPickup(pos){
   while (G.pickups.length > 6) { const old = G.pickups.shift(); scene.remove(old.s); }   // never more than 6 on the map
 }
 function hurt(n, from, target = player){
-  if (G.over || G.mode === "heist") return;   // heist: the aliens only want the loot
+  if (G.over || G.mode === "deer") return;   // deer sanctuary: the aliens only want the deer
   if (target === partner) {   // host: the co-op partner got hit
     if (partner.dashing || partner.downed) return;
     partner.hp = Math.max(0, partner.hp - n); partner.lastHurt = G.time; fxOut({ hurt: n });
@@ -367,7 +365,7 @@ function objective(html){ $("#objective").innerHTML = html; }
 function objectiveFlash(html){ const prev = $("#objective").innerHTML; objective(html); clearTimeout(objTimer); objTimer = setTimeout(() => { if ($("#objective").innerHTML === html) objective(G.tut ? G.tut.text : prev); }, 2000); }
 
 /* ================================ HUD ================================ */
-function renderHP(){ $("#hpFill").style.width = (G.mode === "heist" && G.heist ? Math.min(100, G.coins / 10) : player.hp) + "%"; }   // heist: the bar is the loot pile (full at 💰1000)
+function renderHP(){ $("#hpFill").style.width = (G.mode === "deer" && G.sanct ? Math.max(0, G.sanct.hp / G.sanct.max * 100) : player.hp) + "%"; }   // deer sanctuary: the bar is the deer
 function renderAmmo(){
   const w = G.loaded;
   $("#loadedWord").textContent = w ? (settings.labels === "ko" ? w.kr : meaning(w)) : "—";
@@ -380,10 +378,9 @@ function renderQuick(){
 }
 function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
 function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
-  if (G.mode === "heist" && G.heist) {
-    const off = fort.towers.filter(t => t.offline).length;
-    $("#waveLbl").textContent = `🏦 Wave ${G.wave} · ${G.bossOut ? bossLocksLbl() : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 🎒 ${G.unlocked.length}/${G.pool.length} words${off ? ` · 📻 ${off} offline` : ""}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
-    $("#scoreLbl").textContent = `💰 LOOT ${G.coins} · 🔐 ${G.heist.cracked}`; return; }
+  if (G.mode === "deer" && G.sanct) { const b = G.bossOut && G.aliens.find(a => a.special && !a.dead);
+    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? `👑 ❤ ${Math.max(0, Math.ceil(b.hp))}` : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
+    $("#scoreLbl").textContent = `🦌 ❤ ${Math.ceil(G.sanct.hp)}`; return; }
   if (G.mode === "fortress") { const z = world.zones[G.zone];
     $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
   if (G.mode === "escape") { const cp = world.route[Math.min(G.cp, world.route.length - 1)];
@@ -489,7 +486,10 @@ addEventListener("keydown", e => {
     if (G.panel === "shop") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n) buy(+n[1] - 1); if (k === "Escape" || k === "KeyE") closePanel(); return; }
     if (G.panel === "brief") { if (k === "KeyE" || k === "Space" || k === "Enter" || k === "Escape") closeBrief();
       const n = /^(?:Digit|Numpad)([1-4])$/.exec(k); if (n && G.waveWords[+n[1] - 1]) say([wordClip(G.waveWords[+n[1] - 1].id)], { interrupt: true }); return; }
-    if (G.panel === "htower") { const n = /^(?:Digit|Numpad)([1-5])$/.exec(k); if (n) htowerKey(+n[1]); if (k === "Escape" || k === "KeyE") closePanel(); return; }
+    if (G.panel === "demon") { if (k === "KeyQ" || k === "Escape") { closeDemon(); objectiveFlash("🦌 수업을 그만뒀어요 · Lesson stopped"); } return; }
+    if (G.panel === "pedestal" || G.panel === "workshop") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct(G.panel === "pedestal" ? "ammo" : "trap"); else if (k === "Escape") closePanel(); return; }
+    if (G.panel === "lessons") { const n = /^(?:Digit|Numpad)([1-6])$/.exec(k); if (n) deerAct("lesson" + (+n[1] - 1)); else if (k === "Escape" || k === "KeyE") closePanel(); return; }
+    if (G.panel === "lessoncard") { if (k === "KeyE" || k === "Space" || k === "Enter") lessonQuiz(); else if (k === "Escape" || k === "KeyQ") closePanel(); return; }
     // any build / repair / safe quiz can be left (Esc, Q or the Exit button) — only a hound bite can't
     if (Q && Q.onPass && G.panel !== "bite" && (k === "Escape" || k === "KeyQ")) { closePanel(); return; }
     if (!Q) { if (k === "KeyE" || k === "Space" || k === "Enter") startQuiz(); return; }
@@ -508,10 +508,10 @@ addEventListener("keydown", e => {
   keys[k] = true;
   if (k === "Space") { e.preventDefault(); dash(); }
   if (k === "KeyR") startReload();
-  if (k === "KeyE" && G.mode === "heist" && G.interact) { heistUse(G.interact); return; }
+  if (k === "KeyE" && G.mode === "deer" && G.interact) { deerUse(G.interact); return; }
   if (k === "KeyE" && G.mode === "fortress" && G.interact && G.interact.kind !== "revive" && !player.downed) { const it = G.interact; if (it.kind === "pad") towerQuiz(it.o); else if (it.kind === "tower") towerPicker(it.o); else if (it.kind === "event") useEvent(it.o); else openShop(); return; }
   if (k === "KeyF") nukeWord();
-  if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a && a.disguised) objectiveFlash("🎭 변장한 외계인은 힌트 없어요 · No hints for a disguised alien — recall it!"); else if (a) announce(a, true); }
+  if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a) announce(a, true); }
   if (shirtMode()) { const n = /^Digit([1-9])$/.exec(k); if (n) { const w = ammoWords()[+n[1] - 1]; if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); } if (n) return; }
   const d = /^Digit([1-4])$/.exec(k);
   if (d && G.recentLoads && G.recentLoads[+d[1] - 1]) { const w = D.words.find(x => x.id === G.recentLoads[+d[1] - 1]); if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); }
@@ -598,12 +598,13 @@ function districtTick(rdt){
 // minimap: static layer drawn once, dynamic dots every few frames
 const MM = { S: 170, W: 136 };
 let mmStatic = null, mmT = 0;
-function mmXY(x, z){ const b = world.bounds, W = b.x1 - b.x0; return [(x - b.x0) / W * MM.S, (z - b.z0) / W * MM.S]; }
+function mmXY(x, z){ const b = world.bounds, W = Math.max(b.x1 - b.x0, b.z1 - b.z0), ox = (W - (b.x1 - b.x0)) / 2; return [(x - b.x0 + ox) / W * MM.S, (z - b.z0) / W * MM.S]; }
 function drawMinimapStatic(){
   const c = document.createElement("canvas"); c.width = c.height = MM.S; const g2 = c.getContext("2d");
   g2.fillStyle = "#15131f"; g2.fillRect(0, 0, MM.S, MM.S);
   const rect = (x0, x1, z0, z1, col) => { const [a, b] = mmXY(x0, z0), [c2, d] = mmXY(x1, z1); g2.fillStyle = col; g2.fillRect(a, b, c2 - a, d - b); };
   for (const [x0, x1, z0, z1, col] of world.mm.areas || []) rect(x0, x1, z0, z1, col);   // raised ground, stairs & ramps
+  if (world.mm.road) { g2.strokeStyle = "#5fd4ff"; g2.lineWidth = 3; g2.beginPath(); world.mm.road.forEach(([x, z], i) => { const [a, b] = mmXY(x, z); if (i) g2.lineTo(a, b); else g2.moveTo(a, b); }); g2.stroke(); }
   for (const b of world.mm.solid) rect(b[0], b[1], b[2], b[3], "#4a4560");
   for (const b of world.mm.enter) { rect(b[0], b[1], b[2], b[3], "#2d4a47"); }
   g2.fillStyle = "#7cf7d4"; for (const [x, z] of world.mm.doors) { const [a, b] = mmXY(x, z); g2.fillRect(a - 2, b - 2, 4, 4); }
@@ -616,9 +617,10 @@ function drawMinimap(){
   for (const a of G.aliens) { if (a.dead) continue; const d = a.pos.distanceTo(player.pos);
     if (!a.active && d > 30) continue;   // sleeping aliens only show up when you're close
     const [x, y] = mmXY(a.pos.x, a.pos.z); g2.fillStyle = a.active ? "#ff4d6d" : "rgba(255,77,109,.45)"; g2.beginPath(); g2.arc(x, y, a.active ? 3 : 2.2, 0, 7); g2.fill(); }
-  if (G.mode === "heist" && G.heist) { for (const sf of G.heist.safes) { if (sf.openT != null) continue; const [x, y] = mmXY(sf.x, sf.z); g2.fillStyle = "#ffcf5c"; g2.fillRect(x - 3.5, y - 3.5, 7, 7); g2.strokeStyle = "#2a1800"; g2.strokeRect(x - 3.5, y - 3.5, 7, 7); }
-    const [lx, ly] = mmXY(world.loot.x, world.loot.z); g2.fillStyle = G.time - (G.heist.lastHit || -9) < .4 ? "#ff4d6d" : "#ffcf5c"; g2.beginPath(); g2.arc(lx, ly, 5, 0, 7); g2.fill(); }
-  if (G.mode === "fortress" || G.mode === "heist") { for (const p of fort.pads) { const [x, y] = mmXY(p.x, p.z); g2.strokeStyle = "#7cf7d4"; g2.strokeRect(x - 3, y - 3, 6, 6); }
+  if (G.mode === "deer" && G.sanct) { const S = G.sanct, dot = (o, col, r) => { const [x, y] = mmXY(o.x, o.z); g2.fillStyle = col; g2.beginPath(); g2.arc(x, y, r, 0, 7); g2.fill(); };
+    for (const t of S.traps) dot(t, t.cd > 0 ? "#6a5a4a" : "#ff9a3a", 2.8);
+    dot(world.pedestal, "#b388ff", 3.2); dot(world.workshop, "#ffb070", 3.2); dot(world.deer, G.time - S.lastHit < .4 ? "#ff4d6d" : "#9fdcff", 4.5); }
+  if (G.mode === "fortress" || G.mode === "deer") { for (const p of fort.pads) { const [x, y] = mmXY(p.x, p.z); g2.strokeStyle = "#7cf7d4"; g2.strokeRect(x - 3, y - 3, 6, 6); }
     for (const t of fort.towers) { const [x, y] = mmXY(t.x, t.z); g2.fillStyle = t.broken ? "#8a3a4a" : "#7cf7d4"; g2.fillRect(x - 3, y - 3, 6, 6); }
     for (const ev of fort.events) { const [x, y] = mmXY(ev.x, ev.z); g2.fillStyle = "#c77dff"; g2.beginPath(); g2.arc(x, y, 3.5, 0, 7); g2.fill(); }
     for (const m of G.mercs) { const [x, y] = mmXY(m.x, m.z); g2.fillStyle = "#9fb8ff"; g2.beginPath(); g2.arc(x, y, 2.5, 0, 7); g2.fill(); }
@@ -712,7 +714,7 @@ function spawnAlienShirt(pos, w, opt){
   const a = new Alien(scene, pos, w, { ...opt, shirt: opt.shirtText || w.kr }); a.id = Math.random().toString(36).slice(2); G.aliens.push(a); return a;
 }
 function nextNewWord(){
-  const own = new Set(G.unlocked.map(w => w.id)), cands = G.pool.filter(w => !own.has(w.id));
+  const own = new Set(G.unlocked.map(w => w.id)), cands = G.pool.filter(w => !own.has(w.id) && !(G.mode === "deer" && G.sanct && G.sanct.deerIds && G.sanct.deerIds.has(w.id)));   // the deer's words only come from the deer
   const wts = cands.map(w => { const s = stats[w.id]; return s ? Math.max(.3, 1 + s.w * 1.5 - s.r * .4) : 1.2; });
   let r = Math.random() * wts.reduce((a, b) => a + b, 0);
   for (let i = 0; i < cands.length; i++) { r -= wts[i]; if (r <= 0) return cands[i]; }
@@ -822,7 +824,7 @@ function closeNote(){
   Q = null; G.calmT = Math.max(G.calmT, 5);   // a short breather after the quiz
   if (G.mode === "fortress") { G.waveActive = true; startWave(); if (G.unlocked.length >= 5) spawnMerchant(); }
 }
-$("#noteClose").onclick = () => { if (G.panel === "brief") closeBrief(); else if (CLOSABLE.has(G.panel) || EXITABLE.has(G.panel)) closePanel(); else if (!Q) startQuiz(); };
+$("#noteClose").onclick = () => { if (G.panel === "brief") closeBrief(); else if (G.panel === "lessoncard") lessonQuiz(); else if (CLOSABLE.has(G.panel) || EXITABLE.has(G.panel)) closePanel(); else if (!Q) startQuiz(); };
 /* ---------------- 🏰 fortress ---------------- */
 const fort = { pads: [], towers: [], merchant: null, events: [] };
 function signTexture(text, sub){
@@ -968,7 +970,7 @@ function adoptDeer(ev){
   G.deer = { g: grp, x: ev.x, y: ev.y, z: ev.z, vy: 0, cd: 2, charge: null, aura };
 }
 const deerSlow = () => .2 + .1 * ((G.up && G.up.deer) || 0);
-G.speedMul = a => (G.deer && Math.hypot(a.pos.x - G.deer.x, a.pos.z - G.deer.z) < 8) ? 1 - deerSlow() : 1;
+G.speedMul = a => G.mode === "deer" ? ((a.frozenUntil || 0) > G.time ? .3 : 1) : (G.deer && Math.hypot(a.pos.x - G.deer.x, a.pos.z - G.deer.z) < 8) ? 1 - deerSlow() : 1;   // ❄️ frost traps / the ice deer's aura
 function companionsTick(dt){
   const follow = (c, slot, maxSp) => {
     const dx = slot.x - c.x, dz = slot.z - c.z, d = Math.hypot(dx, dz);
@@ -1009,20 +1011,21 @@ function companionsTick(dt){
 }
 function towersTick(dt){
   for (const t of fort.towers) {
-    if (t.broken || t.offline) continue;   // heist: smashed towers wait for a repair quiz, offline ones for tuning
-    const lv = t.lvl || 0;
+    const dm = G.mode === "deer", lv = t.lvl || 0;   // deer sanctuary: towers shoot anything but the boss, with the shared ammo
     t.crystal.rotation.y += dt * 2; t.cd -= dt;
     if (t.cd > 0) continue;
-    let best = null, bd = 22 + 3 * lv;
-    for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || a.disguised || a.locks || !(a.special || (a.word && a.word.id === t.word.id))) continue;   // towers can't read a meaning or open a lock
+    let best = null, bd = dm ? (towerLv() >= 2 ? 26 : 22) : 22 + 3 * lv;
+    for (const a of G.aliens) { if (a.dead || a.spawnT < 1 || (dm ? a.special : !(a.special || (a.word && a.word.id === t.word.id)))) continue;
       const d = a.pos.distanceTo(t.crystalPos); if (d < bd && world.losClear(t.crystalPos, a.aimPoint())) { bd = d; best = a; } }
     // no enemy with this tower's word in range: the crystal dims — time to change its word?
-    t.glow.material.opacity = best ? .7 : .15; t.crystal.material.color.setHex(best ? 0x7cf7d4 : 0x3a6a60);
-    if (!best) { t.cd = .25; continue; }
-    t.cd = .95 * Math.pow(.85, lv);
+    const dry = dm && G.sanct.ammo <= 0;   // out of ammo: the crystal goes dark
+    t.glow.material.opacity = best && !dry ? .7 : .15; t.crystal.material.color.setHex(dry ? 0x444455 : best ? 0x7cf7d4 : 0x3a6a60);
+    if (!best || dry) { t.cd = .25; continue; }
+    if (dm) G.sanct.ammo--;
+    t.cd = dm ? .8 : .95 * Math.pow(.85, lv);
     tracer(t.crystalPos.clone(), best.aimPoint(), 0x7cf7d4); SFX.shotGood();
-    const dmg = 34 * (1 + .5 * ((G.up && G.up.tower) || 0)) * (1 + .4 * lv); burst(best.aimPoint(), 0x7cf7d4, 12, 4); best.stagger = best.special ? .05 : .15;
-    if (best.damage(dmg)) onKill(best, true);
+    const dmg = dm ? SANCT.towerDmg[towerLv()] : 34 * (1 + .5 * ((G.up && G.up.tower) || 0)) * (1 + .4 * lv); burst(best.aimPoint(), 0x7cf7d4, 12, 4); best.stagger = best.special ? .05 : .15;
+    if (best.damage(dmg)) { if (dm) t.kills = (t.kills || 0) + 1; onKill(best, true); }
   }
 }
 // what can I interact with (E)?
@@ -1037,9 +1040,9 @@ function nearestInteract(){
   return null;
 }
 // ---- panels on the paper (#note): tower quiz, tower word picker, shop. The world slows, it doesn't stop. ----
-const CLOSABLE = new Set(["picker", "shop", "htower"]), EXITABLE = new Set(["towerquiz", "hbuild", "hfix", "htune", "safe"]);
+const CLOSABLE = new Set(["picker", "shop", "pedestal", "workshop", "lessons"]), EXITABLE = new Set(["towerquiz", "ammoq", "trapq", "buildq", "lessonq"]);
 function openPanel(kind, head){
-  G.noteOpen = true; G.panel = kind; G.timeScale = G.mode === "heist" ? .3 : .15; document.exitPointerLock && document.exitPointerLock();
+  G.noteOpen = true; G.panel = kind; G.timeScale = G.mode === "deer" ? .3 : .15; document.exitPointerLock && document.exitPointerLock();
   $("#note .nHead").textContent = head; $("#noteClose").hidden = !CLOSABLE.has(kind) && !EXITABLE.has(kind); $("#noteClose").textContent = EXITABLE.has(kind) ? "나가기 · Exit (Esc / Q)" : "닫기 · Close (Esc)";
   $("#note").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow");
 }
@@ -1106,10 +1109,9 @@ $("#noteBody").addEventListener("click", e => {
   const p = e.target.closest("[data-pick]"); if (p && G.panel === "picker") { pickWordFor(G.pickerTower, G.unlocked[+p.dataset.pick]); closePanel(); return; }
   const b = e.target.closest("[data-buy]"); if (b && G.panel === "shop") buy(+b.dataset.buy);
 });
-$("#noteBody").addEventListener("click", e => {   // heist: 🔊 on the new-word card, tower word / upgrade buttons
-  const sb = e.target.closest("[data-say]"); if (sb && G.panel === "brief") { say([wordClip(sb.dataset.say)], { interrupt: true }); return; }
-  const hw = e.target.closest("[data-hword]"); if (hw && G.panel === "htower") { htowerKey(+hw.dataset.hword + 1); return; }
-  if (e.target.closest("[data-hup]") && G.panel === "htower") htowerKey(5);
+$("#noteBody").addEventListener("click", e => {   // deer sanctuary: 🔊 buttons, pedestal / workshop / lesson buttons
+  const sb = e.target.closest("[data-say]"); if (sb && (G.panel === "brief" || G.panel === "lessoncard")) { say([wordClip(sb.dataset.say)], { interrupt: true }); return; }
+  const ab = e.target.closest("[data-act]"); if (ab && !ab.disabled) deerAct(ab.dataset.act);
 });
 function nukeWord(){
   if (G.mode !== "fortress" || !G.up.nuke || G.nukeCd > 0 || !G.loaded) return;
@@ -1241,265 +1243,327 @@ function victory(){
   G.won = true; say([lineClip("clear")]); gameOver();
 }
 
-/* ================================ 🏦 heist ================================ */
-// You robbed the bank and hold its courtyard on the hill. You can't get hurt: the aliens want the 💰 loot.
-// The loot IS your money: aliens that reach it steal coins, upgrades are paid from it, and an alien hitting an
-// empty pile ends the run. Every wave brings 4 NEW words, and the game makes you use them:
-//   📻 every tower goes offline at a new wave until you tune it with a question about ITS new word,
-//   🎭 disguised aliens wear the MEANING — towers can't read it, only your gun with the right Korean word works,
-//   👑 the boss has 4 locks, one per new word (its meaning, or only its sound): shoot each with that word.
-// Other quizzes (3 q) ask about every word you've learned: 🔨 build · 💥 repair · 🔐 safe → money.
-const START_LOOT = 300;
-const safeReward = () => 60 + 15 * G.wave;
-const disguiseChance = () => Math.min(.5, .2 + .03 * (G.wave - 1));
-function heistStart(){
-  const W = world;
-  G.coins = START_LOOT;
-  G.heist = { safes: [], safeT: 0, stolen: 0, lost: 0, cracked: 0, nextWaveT: 0, lastHit: -99, lastWarn: -99,
-    lootTgt: { pos: new THREE.Vector3(W.loot.x, W.loot.y + 1.7, W.loot.z), feet: W.loot.y, loot: true } };
-  for (const [x, z] of W.pads) addPad(x, z);
-  for (let i = 0; i < 3; i++) spawnSafe();
-  heistWave();
+/* ================================ 🦌 deer sanctuary ================================ */
+// Protect the baby ice deer at the back of a snowy valley. The aliens come through ONE gate and follow the
+// glowing road. You can't get hurt and you have no gun: you build the defence out of quizzes.
+//   🔨 tower spots → a tower (2 questions). Towers shoot EVERY alien but share one ammo supply.
+//   💎 pedestal → ammo: 2 questions about ONE word (meaning, then word type) = +30 ammo. ~50 aliens a wave ≈ 5 quizzes.
+//   🔧 workshop → a trap kit: 8 questions on this wave's 4 new words. Place it on the road (E). A trap kills what
+//      steps on it (costs ammo) and is the ONLY thing that hurts the boss — towers can't.
+//   🦌 the deer → lessons: words ONLY the deer knows (≥ 20 % of your words). Each lesson = the word card, 2 questions,
+//      then a 단어 퇴마사 fight with every word you know. Most lessons unlock a technology (stronger traps/towers …).
+// The deer grows with every word you know. Every wave still brings 4 forced new words (the card at the start).
+const SANCT = { ammoQuiz: 30, trapCost: 4, trapRearm: 2.5, deerMax: 1000, towerDmg: [34, 54, 80], trapDmg: [100, 180, 320] };
+const TECHS = [
+  { id: "tower2", icon: "🗼", ko: "탑 강화 I", en: "Towers Lv 2: +60% damage" },
+  { id: "trap2", icon: "🪤", ko: "함정 강화 I", en: "Traps Lv 2: boss damage 100 → 180" },
+  { id: "slot3", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (3 on the road)" },
+  { id: "battery", icon: "🔋", ko: "수정 배터리", en: "Every ammo quiz gives +50% ammo" },
+  { id: "frost", icon: "❄️", ko: "얼음 함정", en: "A trap that fires also freezes aliens within 5 m for 3 s" },
+  { id: "tower3", icon: "🗼", ko: "탑 강화 II", en: "Towers Lv 3: +50% damage, +4 m range", need: "tower2" },
+  { id: "trap3", icon: "🪤", ko: "함정 강화 II", en: "Traps Lv 3: boss damage 180 → 320", need: "trap2" },
+  { id: "slot4", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (4 on the road)", need: "slot3" },
+  { id: "pad5", icon: "🔨", ko: "다섯 번째 탑", en: "A 5th tower spot on the terrace" },
+  { id: "slot5", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (5 on the road)", need: "slot4" },
+];
+const has = id => !!(G.sanct && G.sanct.tech.has(id));
+const towerLv = () => has("tower3") ? 2 : has("tower2") ? 1 : 0;
+const trapLv = () => has("trap3") ? 2 : has("trap2") ? 1 : 0;
+const trapSlots = () => 2 + (has("slot3") ? 1 : 0) + (has("slot4") ? 1 : 0) + (has("slot5") ? 1 : 0);
+const deerSize = () => Math.min(2.4, .55 + .045 * G.unlocked.length);
+const shortWord = w => w.kr.replace(/\s/g, "").length <= 7 && !/[?!_~…]/.test(w.kr);   // fits a 퇴마사 sticker
+const bossHpFor = wave => Math.round(200 * Math.pow(1.45, wave - 1));
+function deerStart(){
+  const W = world, S = G.sanct = { hp: SANCT.deerMax, max: SANCT.deerMax, ammo: 20, kits: 0, traps: [], tech: new Set(), learned: [], techWord: {}, growWords: [],
+    nextWaveT: 0, lastHit: -99, lastWarn: -99, lastAmmoWarn: -99, missionsT: 0, bossHp: 0,
+    deerTgt: { pos: new THREE.Vector3(W.deer.x, W.deer.y + 1.7, W.deer.z), feet: W.deer.y, deer: true } };
+  // words only the deer can teach: at least 20 % of the pool, short enough for the 퇴마사 stickers
+  const shorts = shuffleA(G.pool.filter(shortWord)), n = Math.min(shorts.length, Math.max(TECHS.length, Math.ceil(G.pool.length * .2)));
+  S.deerWords = shorts.slice(0, n); S.deerIds = new Set(S.deerWords.map(w => w.id));
+  TECHS.forEach((t, i) => { if (S.deerWords[i]) S.techWord[t.id] = S.deerWords[i]; });
+  S.growWords = S.deerWords.slice(TECHS.length);
+  // the deer, the pedestal crystal, signs
+  S.deerMesh = deerMesh(); S.deerMesh.position.set(W.deer.x, W.deer.y + .4, W.deer.z); scene.add(S.deerMesh); S.deerMesh.scale.setScalar(deerSize());
+  const tag = (text, sub, x, y, z, sc = 1) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(text, sub), transparent: true, depthWrite: false })); s.position.set(x, y, z); s.scale.set(1.8 * sc, .9 * sc, 1); scene.add(s); return s; };
+  S.signs = [tag("🦌 E", "수업 · lessons", W.deer.x, W.deer.y + 4.6, W.deer.z), tag("💎 E", "탄약 · ammo", W.pedestal.x, W.pedestal.y + 3.6, W.pedestal.z), tag("🔧 E", "함정 · traps", W.workshop.x, W.workshop.y + 5.2, W.workshop.z)];
+  S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.55), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
+  S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(3, 3, 1); S.crystal.add(S.crystalGlow);
+  for (const [x, z] of W.pads.slice(0, 4)) addPad(x, z);
+  deerWave();
 }
-function heistWave(){
-  const fresh = [];
+function deerWave(){
+  const S = G.sanct, fresh = [];
   for (let i = 0; i < 4; i++) { const w = nextNewWord(); if (!w) break; G.unlocked.push(w); G.newIds.add(w.id); markKill(w); fresh.push(w); }
-  if (!fresh.length) { G.won = true; say([lineClip("clear")]); gameOver(); return; }   // every word stolen: you get away
-  G.wave++; G.waveWords = fresh; loadWord(fresh[0]); renderQuick();
-  G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.waveSize = 14 + 2 * G.wave; G.calmT = 15; G.lastCalm = -1; G.spawnT = 3;
-  // towers: healed (broken ones stay broken), spread over the new words, and OFFLINE until tuned
-  fort.towers.forEach((t, i) => { t.word = fresh[i % fresh.length]; if (!t.broken) { t.hp = t.maxHp; t.offline = true; } towerState(t); });
-  openBrief(fresh); renderTop(); renderHP();
+  if (!fresh.length && S.deerWords.every(w => G.unlocked.includes(w))) { G.won = true; say([lineClip("clear")]); gameOver(); return; }   // every word known
+  G.wave++; if (fresh.length) G.waveWords = fresh;
+  G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.waveSize = 45 + 3 * G.wave; G.calmT = G.wave === 1 ? 35 : 20; G.lastCalm = -1; G.spawnT = 2;
+  S.bossHp = bossHpFor(G.wave); S.hp = Math.min(S.max, S.hp + 200);
+  growDeer(); renderHP();
+  if (fresh.length) openBrief(fresh); else objectiveFlash("📚 새 웨이브 단어가 없어요 — 사슴에게 배우세요 · No new wave words left — learn the rest from the deer");
+  renderTop(); renderMissions();
 }
 function openBrief(words){
-  Q = null; openPanel("brief", `🏦 Wave ${G.wave} — 새 단어 · ${words.length} new words`); G.timeScale = 0;
-  // two lines per word (Korean + 🔊 + type, then the meaning) so long expressions still fit
+  Q = null; openPanel("brief", `🦌 Wave ${G.wave} — 새 단어 · ${words.length} new words`); G.timeScale = 0;
   $("#noteBody").innerHTML = `<div class="brief">${words.map((w, i) => `<div class="bRow"><span class="k">${i + 1}</span><div class="bKr"><b class="${w.kr.length > 9 ? "long" : ""}">${esc(w.kr)}</b><button data-say="${w.id}">🔊</button></div><small>${POS_KO[w.pos] || ""} · ${CAT[w.cat].icon}</small><span class="m">${esc(meaning(w))}</span></div>`).join("")}</div>
-    <div class="nHint">잘 외우세요! 이 단어들이 이번 웨이브의 탄창이에요 (키 1–4). · Learn these — they're this wave's ammo (keys 1–4).<br>
-    📻 탑은 새 단어 문제로 켜져요 · Towers are offline until you tune them with a question about their new word.<br>
-    🎭 뜻을 입은 외계인은 탑이 못 쏴요 · Aliens wearing the <b>meaning</b>: only your gun, loaded with the right Korean word.<br>
-    👑 보스의 자물쇠 4개 = 새 단어 4개 · The boss has 4 locks — one per new word.</div>`;
+    <div class="nHint">잘 외우세요! 이번 웨이브의 모든 퀴즈에 나와요 · Learn these — this wave's quizzes use them.<br>
+    💎 탄약 = 문제 2개 · ammo: 2 questions at the pedestal · 🔧 함정 = 문제 8개 (이 4단어) · a trap: 8 questions on these 4 words<br>
+    👑 보스는 함정으로만! · The boss can only be hurt by traps · 🦌 사슴의 수업 = new technology</div>`;
   $("#noteClose").hidden = false; $("#noteClose").textContent = "시작 · Start (E)";
   say(words.map(w => wordClip(w.id)));
 }
 function closeBrief(){
   closePanel();
-  const off = fort.towers.filter(t => t.offline).length;
-  objective(`🏦 Wave ${G.wave}: ${G.waveSize} aliens, then the boss 👑${off ? ` · 📻 ${off} tower${off > 1 ? "s" : ""} offline — E to tune` : ""} · 🔐 safes = 💰`);
-  setTimeout(() => { if (G.mode === "heist" && G.running && G.panel !== "brief") objective(""); }, 8000);
+  objective(`🦌 Wave ${G.wave}: ${G.waveSize} aliens, then the boss 👑 (❤ ${G.sanct.bossHp}, traps only)`);
+  setTimeout(() => { if (G.mode === "deer" && G.running && G.panel !== "brief") objective(""); }, 7000);
 }
-// ---- safes ----
-function spawnSafe(){
-  const H = G.heist, used = H.safes.filter(s => s.openT == null);
-  const spots = world.safeSpots.filter(([x, z]) => !used.some(s => Math.hypot(s.x - x, s.z - z) < 3) && Math.hypot(player.pos.x - x, player.pos.z - z) > 4);
-  if (!spots.length) return;
-  const [x, z] = pick(spots), y = world.groundY(x, z), grp = new THREE.Group(); grp.position.set(x, y, z);
-  const steel = new THREE.MeshStandardMaterial({ color: 0x5a6070, roughness: .35, metalness: .85 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 1.1), steel); body.position.y = .7; grp.add(body);
-  const hinge = new THREE.Group(); hinge.position.set(-.55, .7, .56); grp.add(hinge);
-  const door = new THREE.Mesh(new THREE.BoxGeometry(1.08, 1.26, .08), new THREE.MeshStandardMaterial({ color: 0x6f7688, roughness: .3, metalness: .9 })); door.position.x = .54; hinge.add(door);
-  const dial = new THREE.Mesh(new THREE.CylinderGeometry(.2, .2, .08, 20), new THREE.MeshStandardMaterial({ color: 0xffcf5c, metalness: .9, roughness: .2 })); dial.rotation.x = Math.PI / 2; dial.position.set(.54, .1, .07); hinge.add(dial);
-  const gold = new THREE.Mesh(new THREE.BoxGeometry(.8, .4, .6), new THREE.MeshStandardMaterial({ color: 0xffc83d, metalness: .9, roughness: .25, emissive: 0x6a4a00, emissiveIntensity: .4 })); gold.position.y = .45; grp.add(gold);
-  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture("🔐 E", "금고 · safe"), transparent: true, depthWrite: false })); sign.position.y = 2.2; sign.scale.set(1.6, .8, 1); grp.add(sign);
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffcf5c, transparent: true, opacity: .35, depthWrite: false, blending: THREE.AdditiveBlending })); glow.position.y = 1; glow.scale.set(3, 3, 1); grp.add(glow);
-  grp.rotation.y = Math.atan2(-x, -z);   // the door faces the middle of the map
-  scene.add(grp); H.safes.push({ g: grp, x, y, z, hinge, sign, openT: null });
+function growDeer(){ const S = G.sanct; if (S && S.deerMesh) S.deerMesh.scale.setScalar(deerSize()); }
+// ---- quizzes ----
+function pickQuizWord(){   // 60 % this wave's words, else older ones (struggled-with first)
+  const older = G.unlocked.filter(w => !G.waveWords.includes(w));
+  const cands = older.length && Math.random() < .4 ? older : G.waveWords.length ? G.waveWords : G.unlocked;
+  const wts = cands.map(w => { const st = stats[w.id]; return st ? Math.max(.4, 1 + st.w * 1.2 - st.r * .25) : 1.2; });
+  let r = Math.random() * wts.reduce((a, b) => a + b, 0);
+  for (let k = 0; k < cands.length; k++) { r -= wts[k]; if (r <= 0) return cands[k]; }
+  return cands[0];
 }
-function crackSafe(sf){
-  const H = G.heist, r = safeReward(); G.coins += r; H.stolen += r; H.cracked++; sf.openT = 0; H.safeT = Math.min(H.safeT, 6);
-  SFX.pickup(); burst(new THREE.Vector3(sf.x, sf.y + 1, sf.z), 0xffcf5c, 70, 7); floater(new THREE.Vector3(sf.x, sf.y + 1.8, sf.z), `+💰${r}`, "#ffcf5c", 34, 1.6);
-  objectiveFlash(`🔐 금고를 털었어요! · Safe cracked: <b>+💰${r}</b> — it goes on the loot pile`); renderTop(); renderHP();
-}
-// ---- towers: online / 📻 offline (needs tuning) / 💥 broken (needs a repair quiz) ----
-function towerSign(t){
-  const old = t.sign.material.map;
-  t.sign.material.map = t.broken ? signTexture("💥 E", "수리 · repair") : t.offline ? signTexture("📻 E", "조율 · tune") : signTexture(t.word.kr, `Lv ${(t.lvl || 0) + 1} · E`);
-  t.sign.material.needsUpdate = true;
-  if (old && old !== t.sign.material.map) old.dispose();
-}
-function towerState(t){
-  t.crystal.visible = !t.broken; t.glow.visible = !t.broken && !t.offline; t.g.rotation.z = t.broken ? .32 : 0;
-  if (t.offline) t.crystal.material.color.setHex(0x3a3a48);
-  towerSign(t);
-}
-function heistBuildTower(pad){
-  const w = G.loaded && G.waveWords.includes(G.loaded) ? G.loaded : G.waveWords[fort.towers.length % G.waveWords.length];
-  const t = buildTower(pad, w); Object.assign(t, { lvl: 0, maxHp: 120, hp: 120, broken: false, offline: false, tgt: { pos: new THREE.Vector3(t.x, t.y + 1.7, t.z), feet: t.y, tower: t } });
-  towerState(t); objectiveFlash(`🗼 탑 완성! · Tower built — it shoots <b>${esc(w.kr)}</b>. E at the tower: change its word or upgrade it (💰)`);
-  return t;
-}
-function breakTower(t){
-  t.broken = true; t.offline = false; t.hp = 0; towerState(t);
-  SFX.slam(); burst(t.crystalPos.clone(), 0x8a8aa0, 50, 6); objectiveFlash("💥 탑이 부서졌어요! · A tower was smashed — E at it to repair (quiz)");
-}
-function repairTower(t){
-  t.broken = false; t.offline = false; t.hp = t.maxHp; towerState(t);
-  SFX.pickup(); burst(t.crystalPos.clone(), 0x7cf7d4, 50, 6); objectiveFlash("🗼 수리 완료! · Tower repaired");
-}
-function tuneTower(t){
-  t.offline = false; towerState(t); SFX.pickup(); burst(t.crystalPos.clone(), 0x7cf7d4, 40, 6);
-  const left = fort.towers.filter(x => x.offline).length;
-  objectiveFlash(`📻 조율 완료! · Tuned — it shoots <b>${esc(t.word.kr)}</b>${left ? ` · ${left} still offline` : ""}`);
-}
-const towerUpCost = t => 100 + 60 * t.lvl;
-function openTowerPanel(t){ openPanel("htower", "🗼 탑 · Tower"); G.pickerTower = t; renderTowerPanel(); }
-function renderTowerPanel(){
-  const t = G.pickerTower, max = t.lvl >= 3;
-  $("#noteBody").innerHTML = `<div class="qHead">🗼 Lv ${t.lvl + 1}${max ? " (MAX)" : ""} · HP ${Math.ceil(t.hp)}/${t.maxHp} · 💰 ${G.coins}</div>
-    <div class="qPrompt">쏠 단어 · <small>Which word should it shoot? (a new word = a new tuning question)</small></div>
-    <div class="qOpts">${G.waveWords.map((w, i) => `<button data-hword="${i}" class="${w.id === t.word.id ? "right" : ""}"><span class="k">${i + 1}</span>${esc(w.kr)}</button>`).join("")}</div>
-    <div class="shop" style="margin-top:10px"><button data-hup="1" ${max ? "disabled" : ""}><span class="k">5</span><b>강화 · Upgrade</b> <small>+40% damage · +3 m range · shoots faster · +60 HP — paid from the loot</small><span class="c">${max ? "MAX" : "💰 " + towerUpCost(t)}</span></button></div>`;
-}
-function htowerKey(n){
-  const t = G.pickerTower; if (!t) return;
-  if (n <= 4) { const w = G.waveWords[n - 1]; if (!w || w === t.word) return;
-    t.word = w; t.offline = true; towerState(t); closePanel(); heistUse({ kind: "htune", o: t }); return; }   // a new word must be tuned in
-  if (t.lvl >= 3) return;
-  const c = towerUpCost(t); if (G.coins < c) { SFX.empty(); objectiveFlash("💰 돈이 부족해요 · Not enough money — crack a safe 🔐"); return; }
-  G.coins -= c; t.lvl++; t.maxHp += 60; t.hp = t.maxHp; SFX.pickup(); burst(t.crystalPos.clone(), 0xffcf5c, 40, 6); towerSign(t); renderTowerPanel(); renderTop(); renderHP();
-  if (G.coins < 100) objectiveFlash("⚠️ 전리품이 얼마 안 남았어요 · Your loot pile is low — an alien hitting an empty pile ends the heist");
-}
-// ---- quizzes: half about this wave's new words, the rest about older words (struggled-with ones first) ----
-function heistQuestions(n){
-  const out = [], used = new Set(), older = G.unlocked.filter(w => !G.waveWords.includes(w));
-  for (let i = 0; i < n; i++) {
-    let cands = (older.length && Math.random() < .45 ? older : G.waveWords).filter(w => !used.has(w.id));
-    if (!cands.length) cands = G.unlocked.filter(w => !used.has(w.id)); if (!cands.length) cands = G.unlocked;
-    const wts = cands.map(w => { const st = stats[w.id]; return st ? Math.max(.4, 1 + st.w * 1.2 - st.r * .25) : 1.2; });
-    let r = Math.random() * wts.reduce((a, b) => a + b, 0), w = cands[0];
-    for (let k = 0; k < cands.length; k++) { r -= wts[k]; if (r <= 0) { w = cands[k]; break; } }
-    used.add(w.id); out.push(knownQuestion(w));
-  }
-  return out;
-}
-function heistQuiz(kind, head, nOrQs, onPass){
+const twoQ = w => [knownQuestion(w, ["mean"]), knownQuestion(w, ["pos"])];   // the meaning, then the word type — same word
+function deerQuiz(kind, head, qs, onPass){
   openPanel(kind, head);
-  Q = { qs: Array.isArray(nOrQs) ? nOrQs : heistQuestions(nOrQs), i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel(); onPass(); } };
+  Q = { qs, i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel(); onPass(); } };
   renderQuiz();
 }
-function heistUse(it){
-  const o = it.o;
-  if (it.kind === "hbuild") heistQuiz("hbuild", "🔨 탑 짓기 퀴즈 · Build quiz", 3, () => { if (fort.pads.includes(o)) heistBuildTower(o); });
-  else if (it.kind === "hfix") heistQuiz("hfix", "💥 탑 수리 퀴즈 · Repair quiz", 2, () => { if (o.broken) repairTower(o); });
-  else if (it.kind === "htune") heistQuiz("htune", `📻 탑 조율 · Tune the tower`, [knownQuestion(o.word, ["mean", "kr"])], () => { if (o.offline && !o.broken) tuneTower(o); });
-  else if (it.kind === "safe") heistQuiz("safe", `🔐 금고 털기 · Crack the safe (+💰${safeReward()})`, 3, () => { if (o.openT == null) crackSafe(o); });
-  else if (it.kind === "htower") openTowerPanel(o);
+// ---- pedestal: ammo ----
+function openPedestal(){ openPanel("pedestal", "💎 수정 받침대 · Pedestal"); renderPedestal(); }
+function renderPedestal(){
+  const S = G.sanct, per = Math.round(SANCT.ammoQuiz * (has("battery") ? 1.5 : 1)), left = Math.max(0, G.waveSize - G.waveKills), need = left * Math.ceil(100 * (1 + .08 * (G.wave - 1)) / SANCT.towerDmg[towerLv()]);
+  $("#noteBody").innerHTML = `<div class="qHead">💎 탄약 · Ammo: <b>${S.ammo}</b> ${S.ammo < need ? `· ⚠ ~${need} needed for ${left} aliens` : "· ✓ enough for now"}</div>
+    <div class="dList">${fort.towers.map((t, i) => `<div>🗼 ${i + 1} · Lv ${towerLv() + 1} · ${t.kills || 0} kills</div>`).join("") || "<div>🔨 탑이 없어요 · no towers yet — E at a 🔨 spot</div>"}
+    <div>🪤 ${S.traps.length}/${trapSlots()} traps on the road${S.kits ? ` · 📦 ${S.kits} kit${S.kits > 1 ? "s" : ""} to place` : ""} · each shot = ${SANCT.trapCost} ammo</div></div>
+    <div class="shop" style="margin-top:10px"><button data-act="ammo"><span class="k">1</span><b>탄약 만들기 · Make ammo</b> <small>2 questions about one word (meaning, word type)</small><span class="c">+${per}</span></button></div>`;
 }
-function heistInteract(){
-  const H = G.heist, near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
-  for (const t of fort.towers) if (near(t, 2.6)) return t.broken ? { kind: "hfix", o: t, label: "E · 💥 탑 수리 — 퀴즈 · repair the tower (quiz)" }
-    : t.offline ? { kind: "htune", o: t, label: "E · 📻 탑 조율 — 새 단어 문제 1개 · tune the tower (1 question about its new word)" }
-    : { kind: "htower", o: t, label: `E · 🗼 Lv ${t.lvl + 1} · ${esc(t.word.kr)} · HP ${Math.ceil(t.hp)}/${t.maxHp} — 단어 / 강화 · word & upgrade` };
-  for (const p of fort.pads) if (near(p, 2.2)) return { kind: "hbuild", o: p, label: "E · 🔨 탑 짓기 — 퀴즈 · build a tower (quiz)" };
-  for (const sf of H.safes) if (sf.openT == null && near(sf, 2.4)) return { kind: "safe", o: sf, label: `E · 🔐 금고 털기 — 퀴즈 · crack the safe (quiz) · 💰${safeReward()}` };
-  return null;
+function ammoQuiz(){
+  const w = pickQuizWord();
+  deerQuiz("ammoq", "💎 탄약 퀴즈 · Ammo quiz", twoQ(w), () => {
+    const S = G.sanct, add = Math.round(SANCT.ammoQuiz * (has("battery") ? 1.5 : 1)); S.ammo += add; SFX.pickup();
+    burst(S.crystal.position.clone(), 0xb388ff, 50, 6); objectiveFlash(`💎 +${add} 탄약 · ammo (${S.ammo})`); openPedestal(); });
 }
-// ---- the aliens: go for a tower that's in their way (disguised ones hunt towers), else the loot ----
-function heistTarget(a){
-  const H = G.heist; if (!H) return player;
-  if (a.htgt && G.time < (a.htgtUntil || 0) && !(a.htgt.tower && a.htgt.tower.broken)) return a.htgt;
-  let best = H.lootTgt, bd = a.disguised ? 30 : 9;   // a tower within 9 m draws an alien off the loot; disguised ones go looking for towers
-  for (const t of fort.towers) { if (t.broken || !t.tgt) continue; const d = Math.hypot(t.x - a.pos.x, t.z - a.pos.z); if (d < bd && (a.disguised || Math.abs(t.y - a.pos.y) < 1.5)) { bd = d; best = t.tgt; } }
-  a.htgt = best; a.htgtUntil = G.time + .5; return best;
+// ---- workshop: traps ----
+function openWorkshop(){ openPanel("workshop", "🔧 작업장 · Workshop"); renderWorkshop(); }
+function renderWorkshop(){
+  const S = G.sanct, full = S.traps.length + S.kits >= trapSlots(), dmg = SANCT.trapDmg[trapLv()];
+  $("#noteBody").innerHTML = `<div class="qHead">🪤 ${S.traps.length}/${trapSlots()} on the road${S.kits ? ` · 📦 ${S.kits} to place` : ""} · Lv ${trapLv() + 1}: boss −${dmg}${has("frost") ? " · ❄️ freezes" : ""}</div>
+    <div class="dList"><div>👑 이번 보스 · this wave's boss: ❤ ${S.bossHp} → needs ${Math.ceil(S.bossHp / dmg)} trap hits (you have ${S.traps.length + S.kits})</div>
+    <div>함정은 밟으면 터져요 (탄약 ${SANCT.trapCost}) · a trap fires when an alien steps on it (${SANCT.trapCost} ammo), then re-arms</div></div>
+    <div class="shop" style="margin-top:10px"><button data-act="trap" ${full ? "disabled" : ""}><span class="k">1</span><b>함정 만들기 · Build a trap</b> <small>8 questions on this wave's 4 new words</small><span class="c">${full ? "FULL" : "🪤 +1"}</span></button></div>`;
 }
-function heistSlam(center, r, a){
-  const H = G.heist; if (!H || G.over) return;
-  SFX.slam(); burst(center.clone().setY(center.y + .2), 0xff2244, 30, 6);
-  if (player.pos.distanceTo(center) < 14) G.shake = .25;
-  const T = a.htgt || H.lootTgt, boss = a.special;
-  if (T.tower) { const t = T.tower; if (t.broken || Math.hypot(t.x - center.x, t.z - center.z) > r + .8) return;
-    t.hp -= boss ? 45 : 25; floater(t.crystalPos.clone(), boss ? "-45" : "-25", "#ff4d6d", 22, .8, "tw" + fort.towers.indexOf(t));
-    if (t.hp <= 0) breakTower(t); return; }
-  if (Math.hypot(world.loot.x - center.x, world.loot.z - center.z) > r + 2.4) return;
-  // the loot is your money: they grab coins; an empty pile = they got it all
-  if (G.coins <= 0) { G.coins = 0; renderHP(); gameOver(); return; }
-  const steal = Math.min(G.coins, boss ? 50 : 15); G.coins -= steal; H.lost += steal; H.lastHit = G.time; renderHP(); renderTop();
-  burst(new THREE.Vector3(world.loot.x, world.loot.y + 1.2, world.loot.z), 0xffcf5c, 24, 5);
-  floater(new THREE.Vector3(world.loot.x, world.loot.y + 2.4, world.loot.z), `-💰${steal}`, "#ff8a5c", 26, 1, "loot");
-  if (G.time - H.lastWarn > 8) { H.lastWarn = G.time; objectiveFlash(G.coins < 100 ? "🚨 전리품이 거의 없어요! · The pile is almost empty — one more hit on an empty pile ends the heist!" : "🚨 전리품을 훔쳐 가요! · They're stealing from the loot!"); }
+function trapQuiz(){
+  const S = G.sanct; if (S.traps.length + S.kits >= trapSlots()) return;
+  const ws = G.waveWords.length ? G.waveWords : G.unlocked.slice(-4), qs = [];
+  for (const w of ws) qs.push(knownQuestion(w, ["mean"]), knownQuestion(w, ["kr"]));
+  while (qs.length < 8) qs.push(knownQuestion(pick(ws), ["pos"]));
+  deerQuiz("trapq", "🔧 함정 퀴즈 · Trap quiz (8)", shuffleA(qs).slice(0, 8), () => {
+    S.kits++; SFX.pickup(); objectiveFlash("📦 함정 완성! · Trap ready — walk onto the glowing road and press <b>E</b> to place it"); renderMissions(); });
 }
-// ---- the boss: 4 locks, one per new word — its meaning or only its sound. 3 hits with that word open a lock. ----
-function setLockClue(a){
-  const L = a.locks[a.lockI]; a.word = L.w; a.announced = false;
-  a.setShirt(L.audio ? "🔊 ?" : meaning(L.w));
-  if (L.audio) { say([wordClip(L.w.id)], { interrupt: true }); a.nextSay = G.time + 6; }
+function placeTrap(){
+  const S = G.sanct; if (!S.kits) return;
+  const x = player.pos.x, z = player.pos.z, y = world.groundY(x, z), grp = new THREE.Group(); grp.position.set(x, y + .02, z);
+  const plate = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.2, .12, 20), new THREE.MeshStandardMaterial({ color: 0x3a4458, roughness: .5, metalness: .6 })); plate.position.y = .06; grp.add(plate);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05, .05, 8, 36), new THREE.MeshBasicMaterial({ color: 0xff9a3a })); ring.rotation.x = Math.PI / 2; ring.position.y = .14; grp.add(ring);
+  const spikes = new THREE.Group(); grp.add(spikes);
+  for (let i = 0; i < 9; i++) { const a = i / 9 * Math.PI * 2, r = i ? .6 : 0, c = new THREE.Mesh(new THREE.ConeGeometry(.12, .7, 6), new THREE.MeshStandardMaterial({ color: 0xd8e2f0, metalness: .8, roughness: .3 })); c.position.set(Math.cos(a) * r, .35, Math.sin(a) * r); spikes.add(c); }
+  spikes.position.y = -.5;
+  scene.add(grp); S.traps.push({ g: grp, x, y, z, ring, spikes, cd: 0, pop: 0 }); S.kits--;
+  SFX.reload(); objectiveFlash(`🪤 함정 설치! · Trap placed (${S.traps.length}/${trapSlots()})`); renderMissions();
 }
-function spawnHeistBoss(){
-  G.bossOut = true; const [ex, ez] = pick(world.entries), f = world.freeSpot(ex, ez);
-  const locks = shuffleA(G.waveWords).map((w, i) => ({ w, hits: 0, audio: i % 2 === 1, done: false, missed: false }));
-  const a = new Alien(scene, new THREE.Vector3(f.x, world.groundY(f.x, f.z), f.z), locks[0].w, { rise: true, special: true, shirt: "?", hp: 1e9, speed: 1.15, skills: { orb: false, slam: true } });
-  a.id = "boss" + G.wave; a.locks = locks; a.lockI = 0; G.aliens.push(a); setLockClue(a);
-  objective(`👑 보스 등장! · The <b>boss</b> has ${locks.length} locks — each shows a new word's <b>meaning</b> or only its 🔊 <b>sound</b> (Q = hear again). Shoot it 3× with that word. Wrong word = the lock heals.`);
-  setTimeout(() => { if (G.mode === "heist" && G.running && G.bossOut) objective(""); }, 9000);
-  SFX.charge(); renderTop();
-}
-function bossLockHit(a, point, good){
-  const L = a.locks[a.lockI];
-  if (!good) { SFX.shot(); SFX.resist(); L.hits = Math.max(0, L.hits - 1); if (!L.missed) { L.missed = true; mark(L.w, false); }
-    hitmarker(false); burst(point, 0x9a93c2, 10, 3); floater(point, `✗ 🔒 ${L.hits}/3`, "#ff8a8a", 26, .9, "lock"); return; }
-  SFX.shotGood(); L.hits++; a.stagger = .08; burst(point, 0x7cf7d4, 20, 5); hitmarker(true); floater(point, `🔓 ${L.hits}/3`, "#7cf7d4", 28, .9, "lock");
-  if (L.hits < 3) return;
-  L.done = true; if (!L.missed) mark(L.w, true); SFX.pickup(); burst(a.aimPoint(), 0xffcf5c, 80, 10);
-  killfeed(`🔓 <b>${esc(L.w.kr)}</b> = ${esc(meaning(L.w))}`);
-  a.lockI++;
-  if (a.lockI >= a.locks.length) { a.damage(1e10); onKill(a); return; }
-  setLockClue(a); objectiveFlash(`🔓 자물쇠 ${a.lockI}/${a.locks.length} — 다음 · next lock`); renderTop();
-}
-function heistBossKill(a){
-  const H = G.heist; G.shake = 1.2; SFX.slam(); SFX.kill();
-  const v = $("#vignette"); v.style.boxShadow = "inset 0 0 400px 200px rgba(255,230,160,.8)"; setTimeout(() => v.style.boxShadow = "", 350);
-  for (let i = 0; i < 4; i++) burst(a.aimPoint(), [0xffcf5c, 0xffffff, 0xff8a3a, 0x7cf7d4][i], 120, 16 + i * 4);
-  for (const o of G.aliens) if (!o.dead && o !== a) { burst(o.aimPoint(), 0xffcf5c, 30, 7); o.die(); G.kills++; G.score += 50; }
-  G.coins += 100; H.stolen += 100; G.bossOut = false; H.nextWaveT = 3;
-  objective("💥 보스 처치! +💰100 · Boss down — 4 new words are coming"); renderTop(); renderHP();
-}
-const bossLocksLbl = () => { const b = G.aliens.find(a => a.locks && !a.dead); return b ? "👑 " + b.locks.map(l => l.done ? "🔓" : "🔒").join("") : "👑 BOSS"; };
-function heistTick(dt, rdt){
-  if (G.mode !== "heist" || G.over || !G.heist) return;
-  const H = G.heist, L = world.loot;
-  towersTick(dt);
-  for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
-  for (const t of fort.towers) if (t.offline) t.sign.position.y = 5 + Math.sin(G.time * 5) * .12;   // offline towers bounce their sign
-  // safes: bobbing sign; a cracked one swings open, then disappears; new ones turn up (3 at a time)
-  for (const sf of H.safes) {
-    if (sf.openT == null) { sf.sign.position.y = 2.2 + Math.sin(G.time * 2 + sf.x) * .1; continue; }
-    sf.openT += dt; sf.hinge.rotation.y = -Math.min(1.9, sf.openT * 3);
-    if (sf.openT > 2.5) { scene.remove(sf.g); sf.gone = true; } }
-  H.safes = H.safes.filter(sf => !sf.gone);
-  if (H.safes.filter(sf => sf.openT == null).length < 3) { H.safeT -= dt; if (H.safeT <= 0) { spawnSafe(); H.safeT = 12; } }
-  // the loot pile = your money (full at 💰1000)
-  const keep = Math.ceil(Math.min(1, G.coins / 1000) * L.pieces.length); L.pieces.forEach((p, i) => p.visible = i < keep);
-  // the boss's sound lock repeats its word
-  const B = G.aliens.find(a => a.locks && !a.dead);
-  if (B && B.locks[B.lockI].audio && G.time > (B.nextSay || 0) && !G.noteOpen) { B.nextSay = G.time + 6; say([wordClip(B.word.id)]); }
-  // interaction prompt
-  const it = !G.noteOpen && !G.backpackOpen ? heistInteract() : null;
-  $("#interact").hidden = !it; if (it) $("#interact").innerHTML = it.label; G.interact = it;
-  // arrow: the loot when it's being robbed and you're away, else an offline tower, else the nearest safe
-  let tgt = null;
-  const off = fort.towers.find(t => t.offline && Math.hypot(t.x - player.pos.x, t.z - player.pos.z) > 3);
-  if (G.time - H.lastHit < 3 && Math.hypot(L.x - player.pos.x, L.z - player.pos.z) > 12) tgt = { x: L.x, z: L.z, label: "🚨 전리품 · the loot" };
-  else if (off && !fort.towers.some(t => t.offline && Math.hypot(t.x - player.pos.x, t.z - player.pos.z) <= 3)) tgt = { x: off.x, z: off.z, label: "📻 탑 조율 · tune a tower" };
-  else { let bd = 1e9; for (const sf of H.safes) { if (sf.openT != null) continue; const d = Math.hypot(sf.x - player.pos.x, sf.z - player.pos.z); if (d < bd) { bd = d; tgt = d > 6 ? { x: sf.x, z: sf.z, label: "🔐 금고 · safe" } : null; } } }
-  $("#radar").hidden = !tgt || G.backpackOpen || G.noteOpen;
-  if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
-    $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`;
-    $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
-  // waves
-  if (H.nextWaveT > 0) { H.nextWaveT -= dt; if (H.nextWaveT <= 0) { if (G.noteOpen) H.nextWaveT = .2; else heistWave(); } return; }
-  if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
-  if (G.waveKills >= G.waveSize && !G.bossOut) spawnHeistBoss();
-  const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(22, 8 + G.wave * 2);
-  G.spawnT -= dt;
-  if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
-    G.spawnT = Math.max(.7, 1.8 - G.wave * .07); G.waveSpawned++;
-    const [ex, ez] = pick(world.entries), w = nextWeakWord(), dis = Math.random() < disguiseChance();
-    const a = spawnAlienShirt(new THREE.Vector3(ex + rnd(-3, 3), 0, ez + rnd(-3, 3)), w, { rise: true, shirtText: dis ? meaning(w) : null,
-      speed: Math.min(2.4, rnd(1.4, 1.8) + G.wave * .04) * (dis ? 1.1 : 1), skills: { orb: false, slam: true } });
-    a.disguised = dis;
+function pickUpTrap(t){ const S = G.sanct; scene.remove(t.g); S.traps = S.traps.filter(x => x !== t); S.kits++; SFX.select(); objectiveFlash("📦 함정을 들었어요 · Trap picked up — E on the road to place it again"); renderMissions(); }
+function trapsTick(dt){
+  const S = G.sanct;
+  for (const t of S.traps) {
+    t.cd -= dt; t.pop = Math.max(0, t.pop - dt * 2.5); t.spikes.position.y = -.5 + .55 * Math.min(1, t.pop * 2);
+    t.ring.material.color.setHex(t.cd > 0 ? 0x5a4a3a : S.ammo < SANCT.trapCost ? 0x884444 : 0xff9a3a);
+    if (t.cd > 0) continue;
+    const victims = G.aliens.filter(a => !a.dead && a.spawnT >= 1 && Math.hypot(a.pos.x - t.x, a.pos.z - t.z) < (a.special ? 2.6 : 2) && Math.abs(a.pos.y - t.y) < 1.5);
+    if (!victims.length) continue;
+    if (S.ammo < SANCT.trapCost) { if (G.time - S.lastAmmoWarn > 6) { S.lastAmmoWarn = G.time; objectiveFlash("⚠️ 함정에 탄약이 없어요! · A trap has no ammo — make ammo at the 💎 pedestal"); } continue; }
+    S.ammo -= SANCT.trapCost; t.cd = SANCT.trapRearm; t.pop = 1; SFX.slam(); G.shake = Math.max(G.shake, player.pos.distanceTo(t.g.position) < 20 ? .3 : 0);
+    burst(new THREE.Vector3(t.x, t.y + .6, t.z), 0xff9a3a, 40, 7);
+    for (const a of victims) {
+      if (a.special) { const dmg = SANCT.trapDmg[trapLv()]; floater(a.aimPoint(), `👑 −${dmg}`, "#ff9a3a", 32, 1.2); a.stagger = .5; if (a.damage(dmg)) onKill(a, true); }
+      else { a.damage(9999); onKill(a, true); }
+    }
+    if (has("frost")) { for (const a of G.aliens) if (!a.dead && Math.hypot(a.pos.x - t.x, a.pos.z - t.z) < 5) a.frozenUntil = G.time + 3; burst(new THREE.Vector3(t.x, t.y + .4, t.z), 0x9fdcff, 40, 8); }
   }
 }
-function clearHeist(){ if (G.heist) for (const sf of G.heist.safes) scene.remove(sf.g); G.heist = null; G.waveWords = []; }
+// ---- the deer's lessons ----
+function lessonOptions(){
+  const S = G.sanct, out = [];
+  for (const t of TECHS) { const w = S.techWord[t.id]; if (!w || S.tech.has(t.id) || (t.need && !S.tech.has(t.need))) continue; out.push({ tech: t, w }); }
+  const g = S.growWords.find(w => !G.unlocked.includes(w)); if (g) out.push({ tech: null, w: g });
+  return out.slice(0, 6);
+}
+function openLessons(){ openPanel("lessons", "🦌 사슴의 수업 · The deer's lessons"); renderLessons(); }
+function renderLessons(){
+  const S = G.sanct, opts = lessonOptions(); G.lessonOpts = opts;
+  $("#noteBody").innerHTML = `<div class="qHead">🦌 ${G.unlocked.length} words · size ${deerSize().toFixed(2)} · ${S.learned.length} lessons done</div>
+    <div class="qPrompt"><small>새 단어 하나 + 문제 2개 + 퇴마사 한 판 (아는 단어 모두) · one new word, 2 questions, then a 퇴마사 fight with every word you know. Q = quit anytime.</small></div>
+    <div class="shop">${opts.map((o, i) => `<button data-act="lesson${i}"><span class="k">${i + 1}</span><b>${o.tech ? `${o.tech.icon} ${esc(o.tech.ko)}` : "🌱 그냥 자라기 · just grow"}</b> <small>${o.tech ? esc(o.tech.en) + " — " : ""}must know <b>${esc(o.w.kr)}</b></small></button>`).join("") || "<div>🎓 사슴이 가르칠 게 없어요 · the deer has taught you everything!</div>"}</div>`;
+}
+function lessonCard(o){
+  openPanel("lessoncard", "🦌 새 단어 · A word from the deer"); G.lesson = o; const w = o.w, C = CAT[w.cat];
+  $("#noteBody").innerHTML = `<div class="nKr">${esc(w.kr)} <button data-say="${w.id}">🔊</button></div><div class="nMean">${esc(meaning(w))}</div>
+    <div class="nTags"><span>${POS_KO[w.pos]}</span><span>${C.icon} ${esc(C.ko)} · ${esc(C.en)}</span></div>${w.ex ? `<div class="nEx">${esc(w.ex)}${w.exEn ? `<small>${esc(w.exEn)}</small>` : ""}</div>` : ""}
+    <div class="nHint">${o.tech ? `${o.tech.icon} <b>${esc(o.tech.ko)}</b> — ${esc(o.tech.en)}` : "🌱 사슴이 자라요 · the deer grows"} · 퀴즈 2개, 그다음 퇴마사 · 2 questions, then the 퇴마사 fight</div>`;
+  $("#noteClose").hidden = false; $("#noteClose").textContent = "퀴즈 시작 · Start (E)";
+  say([wordClip(w.id)], { interrupt: true });
+}
+function lessonQuiz(){ const o = G.lesson; if (!o) return; deerQuiz("lessonq", "🦌 수업 퀴즈 · Lesson quiz", twoQ(o.w), () => openDemon(o)); }
+const shortMeaning = s => { let t = String(s || "").replace(/\s*[（(][^()（）]*[)）]/g, "").trim() || String(s || ""); t = t.split(/\s*[;；]\s*/)[0]; return t.length > 40 ? t.slice(0, 38) + "…" : t; };
+function openDemon(o){
+  closePanel(); G.noteOpen = true; G.panel = "demon"; G.timeScale = .3; document.exitPointerLock && document.exitPointerLock();
+  const bank = G.pool.filter(shortWord), idx = new Map(bank.map((w, i) => [w.id, i]));
+  const cards = bank.map(w => [w.kr, { [settings.lang]: shortMeaning(meaning(w)), en: shortMeaning(w.m.en) }, 0, "x"]);
+  const play = G.unlocked.filter(w => idx.has(w.id) && w.id !== o.w.id).map(w => idx.get(w.id));
+  const f = document.createElement("iframe"); f.id = "lessonFrame"; f.src = "demon-lesson.html"; document.body.appendChild(f); G.demon = { f, o, data: { type: "lesson", cards, play, newIdx: idx.get(o.w.id), lang: settings.lang } };
+  f.addEventListener("load", () => { try { f.contentWindow.focus(); } catch (e) {} });
+}
+function closeDemon(){ if (G.demon) { G.demon.f.remove(); G.demon = null; } G.noteOpen = false; G.panel = null; G.timeScale = 1; G.panelClosedAt = performance.now(); $("#clickToPlay").hidden = false; }
+addEventListener("message", e => {
+  const d = e.data; if (!d || d.from !== "demon-lesson" || !G.demon || e.source !== G.demon.f.contentWindow) return;
+  if (d.type === "ready") { G.demon.f.contentWindow.postMessage(G.demon.data, "*"); try { G.demon.f.contentWindow.focus(); } catch (err) {} return; }
+  const o = G.demon.o; closeDemon();
+  if (d.type === "win") learnDeerWord(o);
+  else if (d.type === "lose") objectiveFlash("😵 퇴마사에게 졌어요 · The demon won — try the lesson again");
+  else objectiveFlash("🦌 수업을 그만뒀어요 · Lesson stopped — come back any time");
+});
+function learnDeerWord(o){
+  const S = G.sanct, w = o.w; if (G.unlocked.includes(w)) return;
+  G.unlocked.push(w); markKill(w); S.learned.push(w.id); if (o.tech) applyTech(o.tech);
+  growDeer(); SFX.pickup(); burst(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 1.5), 0x9fdcff, 90, 8);
+  floater(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 3), "🦌 +1", "#9fdcff", 34, 1.6);
+  objective(`🎓 <b>${esc(w.kr)}</b> = ${esc(meaning(w))} · ${o.tech ? `${o.tech.icon} ${esc(o.tech.ko)} unlocked — ${esc(o.tech.en)}` : "🌱 the deer grew"}`);
+  setTimeout(() => { if (G.mode === "deer" && G.running) objective(""); }, 7000); renderMissions(); renderTop();
+}
+function applyTech(t){
+  const S = G.sanct; S.tech.add(t.id);
+  if (t.id === "pad5") addPad(world.pads[4][0], world.pads[4][1]);
+  for (const tw of fort.towers) towerSignDeer(tw);
+}
+// ---- towers (shared ammo, shoot anything but the boss) ----
+function towerSignDeer(t){ const old = t.sign.material.map; t.sign.material.map = signTexture("🗼", `Lv ${towerLv() + 1}`); t.sign.material.needsUpdate = true; if (old && old !== t.sign.material.map) old.dispose(); }
+function deerBuildTower(pad){ const t = buildTower(pad, G.waveWords[0] || G.unlocked[0]); t.kills = 0; towerSignDeer(t); objectiveFlash("🗼 탑 완성! · Tower built — it shoots every alien, using the shared 💎 ammo"); renderMissions(); return t; }
+// ---- aliens: follow the road, then go for the deer ----
+function deerTarget(a){
+  const S = G.sanct, R = world.road; if (!S) return player;
+  if (a.wp == null) a.wp = 1;
+  while (a.wp < R.length && Math.hypot(R[a.wp].x - a.pos.x, R[a.wp].z - a.pos.z) < 3.8) a.wp++;
+  if (a.wp >= R.length) return S.deerTgt;
+  const p = R[a.wp]; a.wpT = a.wpT || { pos: new THREE.Vector3(), feet: 0 }; a.wpT.pos.set(p.x, p.y + 1.7, p.z); a.wpT.feet = p.y; return a.wpT;
+}
+function deerSlam(center, r, a){
+  const S = G.sanct; if (!S || G.over) return;
+  SFX.slam(); burst(center.clone().setY(center.y + .2), 0xff2244, 30, 6);
+  if (Math.hypot(world.deer.x - center.x, world.deer.z - center.z) > r + 2.5) return;
+  const dmg = a.special ? 250 : 25; S.hp = Math.max(0, S.hp - dmg); S.lastHit = G.time; renderHP();
+  if (player.pos.distanceTo(center) < 16) G.shake = .35;
+  burst(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 1.2), 0x9fdcff, 30, 6); floater(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 2.5), `−${dmg}`, "#ff6b8a", 28, 1);
+  if (G.time - S.lastWarn > 6) { S.lastWarn = G.time; objectiveFlash("🚨 사슴이 공격받고 있어요! · The deer is being attacked!"); }
+  if (S.hp <= 0) { gameOver(); return; }
+  if (a.special) {   // the boss hits once, then goes back to the gate and walks the road (and your traps) again
+    const [ex, ez] = world.entries[0]; a.pos.set(ex, 0, ez); a.baseY = 0; a.spawnT = 0; a.wp = 1; a.state = "walk";
+    objectiveFlash("👑 보스가 문으로 돌아갔어요 — 함정을 더! · The boss went back to the gate — more traps before it returns!");
+  } else { a.die(); a.removeT = .6; G.waveKills++; }   // a normal alien leaks: one hit, then it's gone
+}
+function deerBossKill(a){
+  const S = G.sanct; G.shake = 1.2; SFX.slam(); SFX.kill();
+  const v = $("#vignette"); v.style.boxShadow = "inset 0 0 400px 200px rgba(200,235,255,.8)"; setTimeout(() => v.style.boxShadow = "", 350);
+  for (let i = 0; i < 4; i++) burst(a.aimPoint(), [0x9fdcff, 0xffffff, 0xff9a3a, 0x7cf7d4][i], 120, 16 + i * 4);
+  for (const o of G.aliens) if (!o.dead && o !== a) { burst(o.aimPoint(), 0x9fdcff, 30, 7); o.die(); G.kills++; }
+  G.bossOut = false; S.nextWaveT = 4;
+  objective("💥 보스 처치! · Boss down — the next wave brings 4 new words"); renderTop();
+}
+function spawnDeerBoss(){
+  const S = G.sanct; G.bossOut = true; const [ex, ez] = world.entries[0], f = world.freeSpot(ex, ez);
+  const a = new Alien(scene, new THREE.Vector3(f.x, world.groundY(f.x, f.z), f.z), pick(G.unlocked), { rise: true, special: true, shirt: "👑", hp: S.bossHp, speed: 2.4, skills: { orb: false, slam: true } });
+  a.id = "boss" + G.wave; G.aliens.push(a);
+  objective(`👑 보스 등장! · The <b>boss</b> is coming (❤ ${S.bossHp}) — towers can't hurt it, only your 🪤 traps (−${SANCT.trapDmg[trapLv()]} each)`);
+  setTimeout(() => { if (G.mode === "deer" && G.running && G.bossOut) objective(""); }, 8000);
+  SFX.charge(); renderTop(); renderMissions();
+}
+// ---- interactions ----
+function deerInteract(){
+  const S = G.sanct, W = world, near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
+  for (const t of S.traps) if (near(t, 1.8)) return { kind: "pickup", o: t, label: "E · 🪤 함정 들기 · pick up this trap (to move it)" };
+  if (S.kits && W.roadDist(player.pos.x, player.pos.z) < 2.6 && !S.traps.some(t => Math.hypot(t.x - player.pos.x, t.z - player.pos.z) < 3.2))
+    return { kind: "place", label: `E · 🪤 여기에 함정 놓기 · place a trap here (📦 ${S.kits})` };
+  for (const p of fort.pads) if (near(p, 2.2)) return { kind: "build", o: p, label: "E · 🔨 탑 짓기 — 문제 2개 · build a tower (2 questions)" };
+  if (near(W.pedestal, 3)) return { kind: "pedestal", label: `E · 💎 탄약 · ammo (${S.ammo}) — towers & traps` };
+  if (near(W.workshop, 3.6)) return { kind: "workshop", label: "E · 🔧 작업장 · workshop — build traps" };
+  if (near(W.deer, 4.5)) return { kind: "lessons", label: "E · 🦌 사슴의 수업 · learn from the deer" };
+  for (const t of fort.towers) if (near(t, 2.6)) return { kind: "none", label: `🗼 Lv ${towerLv() + 1} · ${t.kills || 0} kills · 💎 ${S.ammo} shared ammo` };
+  return null;
+}
+function deerUse(it){
+  if (it.kind === "pickup") pickUpTrap(it.o);
+  else if (it.kind === "place") placeTrap();
+  else if (it.kind === "build") { const w = pickQuizWord(); deerQuiz("buildq", "🔨 탑 짓기 · Build quiz", twoQ(w), () => { if (fort.pads.includes(it.o)) deerBuildTower(it.o); }); }
+  else if (it.kind === "pedestal") openPedestal();
+  else if (it.kind === "workshop") openWorkshop();
+  else if (it.kind === "lessons") openLessons();
+}
+function deerAct(act){
+  if (act === "ammo" && G.panel === "pedestal") ammoQuiz();
+  else if (act === "trap" && G.panel === "workshop") trapQuiz();
+  else if (/^lesson\d$/.test(act) && G.panel === "lessons") { const o = (G.lessonOpts || [])[+act.slice(6)]; if (o) lessonCard(o); }
+}
+// ---- missions (top left) ----
+function renderMissions(){
+  const S = G.sanct; if (!S) return;
+  const left = Math.max(0, G.waveSize - G.waveKills), perKill = Math.ceil(100 * (1 + .08 * (G.wave - 1)) / SANCT.towerDmg[towerLv()]), need = left * perKill;
+  const dmg = SANCT.trapDmg[trapLv()], hits = S.traps.length + S.kits, bossHp = G.bossOut ? (G.aliens.find(a => a.special && !a.dead) || { hp: S.bossHp }).hp : S.bossHp;
+  const next = lessonOptions().find(o => o.tech);
+  const row = (ok, html) => `<div class="${ok ? "ok" : ""}">${ok ? "✓" : "•"} ${html}</div>`;
+  $("#missions").innerHTML = `<div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words</div>
+    ${row(fort.towers.length >= fort.towers.length + fort.pads.length, `🗼 탑 짓기 · build towers <b>${fort.towers.length}/${fort.towers.length + fort.pads.length}</b> <small>(🔨 E)</small>`)}
+    ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
+    ${row(hits * dmg >= bossHp, `🪤 보스 · boss ❤ <b>${bossHp}</b> — traps ${hits} × ${dmg} = ${hits * dmg}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
+    ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b>`) : ""}`;
+}
+function deerTick(dt, rdt){
+  if (G.mode !== "deer" || G.over || !G.sanct) return;
+  const S = G.sanct;
+  towersTick(dt); trapsTick(dt);
+  for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
+  S.crystal.rotation.y += rdt * 1.5; S.crystal.position.y = world.pedestal.y + 2.4 + Math.sin(G.time * 2) * .12; S.crystalGlow.material.opacity = S.ammo > 0 ? .7 : .2;
+  S.deerMesh.rotation.y = Math.sin(G.time * .4) * .5; S.deerMesh.position.y = world.deer.y + .4 + Math.abs(Math.sin(G.time * 1.3)) * .05;
+  // interaction prompt
+  const it = !G.noteOpen && !G.backpackOpen ? deerInteract() : null;
+  $("#interact").hidden = !it; if (it) $("#interact").innerHTML = it.label; G.interact = it;
+  // arrow: the deer while it's being hit, else the road when you carry a trap
+  let tgt = null;
+  if (G.time - S.lastHit < 3 && Math.hypot(world.deer.x - player.pos.x, world.deer.z - player.pos.z) > 12) tgt = { x: world.deer.x, z: world.deer.z, label: "🚨 사슴 · the deer" };
+  $("#radar").hidden = !tgt || G.noteOpen;
+  if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
+    $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`; $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
+  S.missionsT -= rdt; if (S.missionsT <= 0) { S.missionsT = .5; renderMissions(); }
+  // waves
+  if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen) S.nextWaveT = .2; else deerWave(); } return; }
+  if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
+  if (G.waveKills >= G.waveSize && !G.bossOut) spawnDeerBoss();
+  const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(30, 12 + G.wave * 2);
+  G.spawnT -= dt;
+  if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
+    G.spawnT = Math.max(.8, 1.6 - G.wave * .05); G.waveSpawned++;
+    const [ex, ez] = world.entries[0];
+    const a = spawnAlienShirt(new THREE.Vector3(ex + rnd(-2.5, 2.5), 0, ez + rnd(-1, 1)), nextWeakWord(), { rise: true, speed: Math.min(2.6, rnd(1.5, 1.9) + G.wave * .03), skills: { orb: false, slam: true } });
+    a.hp = a.maxHp = Math.round(100 * (1 + .08 * (G.wave - 1)));
+  }
+}
+function clearDeer(){
+  const S = G.sanct;
+  if (S) { for (const t of S.traps) scene.remove(t.g); if (S.deerMesh) scene.remove(S.deerMesh); (S.signs || []).forEach(s => scene.remove(s)); if (S.crystal) scene.remove(S.crystal); }
+  if (G.demon) { G.demon.f.remove(); G.demon = null; }
+  G.sanct = null; G.waveWords = [];
+}
 
 /* ================================ 👥 co-op (fortress) ================================ */
 // host-authoritative: the host runs everything; the client moves/shoots locally and mirrors the host's world.
@@ -1507,7 +1571,7 @@ const isHost = () => !!(G.coop && G.coop.role === "host");
 const isClient = () => !!(G.coop && G.coop.role === "client");
 const partner = { pos: new THREE.Vector3(0, 1.7, 60), feet: 0, yaw: 0, pitch: 0, hp: 100, downed: false, bleedT: 0, dashing: 0, stuck: null, lastHurt: -99, seen: false, target: new THREE.Vector3(0, 1.7, 60), avatar: null, reviving: 0 };
 G.targets = () => { const t = []; if (!player.downed) t.push(player); if (isHost() && partner.seen && !partner.downed) t.push(partner); return t.length ? t : [player]; };
-G.targetFor = a => { if (G.mode === "heist") return heistTarget(a); let best = player, bd = 1e9; for (const t of G.targets()) { const d = (t.pos.x - a.pos.x) ** 2 + (t.pos.z - a.pos.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; };
+G.targetFor = a => { if (G.mode === "deer") return deerTarget(a); let best = player, bd = 1e9; for (const t of G.targets()) { const d = (t.pos.x - a.pos.x) ** 2 + (t.pos.z - a.pos.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; };
 function houndTarget(h){ let best = player, bd = 1e9; for (const t of G.targets()) { if (t === partner && partner.stuck) continue; const d = (t.pos.x - h.x) ** 2 + (t.pos.z - h.z) ** 2; if (d < bd) { bd = d; best = t; } } return best; }
 function fxOut(ev){ if (isHost()) (G.fxQ || (G.fxQ = [])).push(ev); }
 function coopAct(ev){ if (isClient()) (G.actQ || (G.actQ = [])).push(ev); }
@@ -1755,7 +1819,7 @@ $("#joinBtn").onclick = () => {
 
 /* ================================ start / pause / over ================================ */
 function resetRun(){
-  clearFortifications(false); clearHeist(); $("#interact").hidden = true;
+  clearFortifications(false); clearDeer(); $("#interact").hidden = true;
   removeHounds(false);
   (G.mercs || []).forEach(m => scene.remove(m.g)); if (G.deer) scene.remove(G.deer.g);
   if (G.note) scene.remove(G.note.s); $("#note").hidden = true; beam.visible = false;
@@ -1770,12 +1834,14 @@ function resetRun(){
   $("#killfeed").innerHTML = ""; $("#helper").hidden = true;
 }
 function startGame(tutorial, mode = "district"){
-  G.mode = mode; if (mode === "survival" || mode === "escape" || mode === "fortress" || mode === "heist") tutorial = false;
+  G.mode = mode; if (mode === "survival" || mode === "escape" || mode === "fortress" || mode === "deer") tutorial = false;
   G.pool = selectedPool(); if (G.pool.length < 6) return;
   initAudio(); setVolume(settings.vol); preload(G.pool.map(w => w.id));
-  useWorld(mode === "heist" ? getHeistWorld() : districtWorld);
+  useWorld(mode === "deer" ? getDeerWorld() : districtWorld);
   resetRun();
-  $("#health .lbl").textContent = mode === "heist" ? "💰 LOOT" : "HP";
+  $("#health .lbl").textContent = mode === "deer" ? "🦌 DEER" : "HP";
+  for (const id of ["#quick", "#loaded", "#crosshair", "#keys"]) $(id).hidden = mode === "deer";   // the sanctuary has no gun
+  $("#missions").hidden = mode !== "deer";
   G.running = true; $("#menu").hidden = true; $("#over").hidden = true; $("#hud").hidden = false;
   if (tutorial) { pedestal.visible = true; G.tut = { step: "move", text: TUT.move.text }; objective(TUT.move.text); }
   else if (mode === "fortress" && isClient()) { pedestal.visible = false; player.hasGun = true; gun.visible = true;
@@ -1783,9 +1849,9 @@ function startGame(tutorial, mode = "district"){
   else if (mode === "fortress") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); G.waveActive = true; setupZone(0); startWave();
     helperShow(`첫 단어: <b class="typed">${esc(w0.kr)}</b> <small>= ${esc(meaning(w0))} · walk to a 🔨 pad + E to build a tower (quiz)</small>`, 7); say([wordClip(w0.id)]); }
-  else if (mode === "heist") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
-    heistStart();
-    helperShow("🏦 <small>You can't get hurt — the 💰 loot pile is your money and your life. 🔨 pads = towers, 📻 tune them each wave, 🔐 safes = more money.</small>", 9); }
+  else if (mode === "deer") { pedestal.visible = false; player.hasGun = false; gun.visible = false;
+    deerStart();
+    helperShow("🦌 <small>Protect the baby deer! 🔨 build towers · 💎 make ammo · 🔧 build traps (the only thing that hurts the boss) · 🦌 learn from the deer. The missions are top left.</small>", 10); }
   else if (mode === "escape") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); placeBeam();
     objective(`🏃 탈출 모드 · Fight your way to the <b>cathedral altar</b> — follow the golden light. Read the word on their shirts! <small>1–9 / mouse wheel = switch word · first word: <b>${esc(w0.kr)}</b> = ${esc(meaning(w0))}</small>`);
@@ -1798,7 +1864,7 @@ function startGame(tutorial, mode = "district"){
     helperShow("가방은 <b>Tab</b>! <small>Look at an alien to hear its word · Tab = backpack</small>", 4); say([lineClip("listen")]); }
   renderHP(); renderAmmo(); renderDash(); renderTop(); renderQuick(); drawGunScreen();
   if (G.coop) coopBegin();
-  if (!G.noteOpen) lock();   // (the heist opens with the new-word card: the mouse stays free for it)
+  if (!G.noteOpen) lock();   // (the deer sanctuary opens with the new-word card: the mouse stays free for it)
 }
 // co-op fortress never freezes or slows the world: menus/panels only cover your own screen
 const liveCoop = () => !!(G.coop && G.mode === "fortress");
@@ -1810,9 +1876,9 @@ function gameOver(){
   if (isHost()) setTimeout(() => G.coop && G.coop.net.send({ t: "over", stats: $("#overStats").innerHTML, title: $("#over .logo").textContent }), 50);
   G.over = true; G.running = false; closeBackpack(false); $("#note").hidden = true; G.noteOpen = false; G.panel = null; Q = null; document.exitPointerLock && document.exitPointerLock();
   const best = store.get("wa_best", 0); if (G.score > best) store.set("wa_best", G.score);
-  if (G.mode === "heist") {
-    const bw = store.get("wa_best_heist", 0), cleared = G.won ? G.wave : G.wave - 1, isBest = cleared > bw; if (isBest) store.set("wa_best_heist", cleared);
-    $("#overStats").innerHTML = [[cleared, isBest ? "🏆 waves (best)" : `waves · best ${Math.max(bw, cleared)}`], [G.unlocked.length, "words learned"], ["💰 " + G.coins, G.won ? "got away with" : "left"], ["💰 " + (G.heist ? G.heist.stolen : 0), "stolen in total"]].map(([b, s2]) => `<div><b>${b}</b><span>${s2}</span></div>`).join("");
+  if (G.mode === "deer") {
+    const S = G.sanct || { learned: [], tech: new Set() }, bw = store.get("wa_best_deer", 0), size = G.unlocked.length, isBest = size > bw; if (isBest) store.set("wa_best_deer", size);
+    $("#overStats").innerHTML = [[size, isBest ? "🏆 words · deer size (best)" : `words · best ${Math.max(bw, size)}`], [G.won ? G.wave : G.wave - 1, "waves"], [S.learned.length, "deer lessons"], [S.tech.size, "technologies"]].map(([b, s2]) => `<div><b>${b}</b><span>${s2}</span></div>`).join("");
     $("#reviewList").innerHTML = G.unlocked.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${POS_KO[w.pos]}</small></div>`).join("");
   } else if (G.mode === "fortress") {
     const bw = store.get("wa_best_fort", 0), cleared = G.wave - 1, isBest = cleared > bw; if (isBest) store.set("wa_best_fort", cleared);
@@ -1829,7 +1895,7 @@ function gameOver(){
   } else $("#overStats").innerHTML = [["★ " + G.score, "score"], [G.kills, "aliens"], [G.perfect, "perfect"], [(G.total - G.aliens.filter(a => !a.dead).length) + "/" + G.total, "cleared"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
   const list = [...G.runMissed.keys()].map(id => D.words.find(w => w.id === id));
   if (!shirtMode()) $("#reviewList").innerHTML = list.length ? list.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${CAT[w.cat].icon}</small></div>`).join("") : `<div>👏 no weak words this run</div>`;
-  $("#over .logo").textContent = G.mode === "district" && G.won ? "구역 정화 완료! · District cleared" : G.mode === "survival" ? "⏱ 생존 끝 · Survival over" : G.mode === "escape" ? (G.won ? "🏃 탈출 성공! · You escaped" : "🏃 탈출 실패 · Didn't make it") : G.mode === "fortress" ? `🏰 요새 함락 · Wave ${G.wave}` : G.mode === "heist" ? (G.won ? "🏦 완벽한 강도! · Every word stolen" : `🏦 전리품을 뺏겼어요 · Loot lost — wave ${G.wave}`) : "Game over";
+  $("#over .logo").textContent = G.mode === "district" && G.won ? "구역 정화 완료! · District cleared" : G.mode === "survival" ? "⏱ 생존 끝 · Survival over" : G.mode === "escape" ? (G.won ? "🏃 탈출 성공! · You escaped" : "🏃 탈출 실패 · Didn't make it") : G.mode === "fortress" ? `🏰 요새 함락 · Wave ${G.wave}` : G.mode === "deer" ? (G.won ? "🦌 사슴이 모든 단어를 알아요! · Your deer knows every word" : `🦌 사슴이 쓰러졌어요 · The deer fell — wave ${G.wave}`) : "Game over";
   setTimeout(() => { $("#hud").hidden = true; $("#over").hidden = false; }, 900);
 }
 $("#reviewList").onclick = e => { const b = e.target.closest("[data-say]"); if (b) say([wordClip(b.dataset.say)], { interrupt: true }); };
@@ -1844,7 +1910,7 @@ $("#tutBtn").onclick = solo(() => startGame(true));
 $("#survBtn").onclick = solo(() => startGame(false, "survival"));
 $("#escBtn").onclick = solo(() => startGame(false, "escape"));
 $("#fortBtn").onclick = solo(() => startGame(false, "fortress"));
-$("#heistBtn").onclick = solo(() => startGame(false, "heist"));
+$("#deerBtn").onclick = solo(() => startGame(false, "deer"));
 
 /* ================================ menu ================================ */
 const UI = {
@@ -1866,9 +1932,9 @@ function renderMenu(){
   $("#starChip").classList.toggle("on", settings.star);
   const n = selectedPool().length;
   $("#poolCount").textContent = n >= 6 ? `🎒 ${n} words in your backpack` : "Pick at least 6 words";
-  $("#poolCount").classList.toggle("bad", n < 6); $("#playBtn").disabled = $("#tutBtn").disabled = $("#survBtn").disabled = $("#escBtn").disabled = $("#fortBtn").disabled = $("#heistBtn").disabled = n < 6;
+  $("#poolCount").classList.toggle("bad", n < 6); $("#playBtn").disabled = $("#tutBtn").disabled = $("#survBtn").disabled = $("#escBtn").disabled = $("#fortBtn").disabled = $("#deerBtn").disabled = n < 6;
   const fb = store.get("wa_best_fort", 0); $("#fortBtn").textContent = `🏰 요새 모드 · Fortress — waves, towers by quiz, a new word per boss${fb ? `  (best: wave ${fb})` : ""}`;
-  const hb = store.get("wa_best_heist", 0); $("#heistBtn").textContent = `🏦 은행 강도 · Heist — 4 new words a wave, crack safes, guard the loot${hb ? `  (best: wave ${hb})` : ""}`;
+  const hb = store.get("wa_best_deer", 0); $("#deerBtn").textContent = `🦌 사슴 지키기 · Deer Sanctuary — towers, traps and lessons, all built from quizzes${hb ? `  (best: ${hb} words)` : ""}`;
   const eb = store.get("wa_best_esc", 0); $("#escBtn").textContent = `🏃 탈출 모드 · Escape — read their shirts, reach the cathedral${eb ? `  (best ${Math.floor(eb / 60)}:${String(eb % 60).padStart(2, "0")})` : ""}`;
   const sb = store.get("wa_best_surv", 0); $("#survBtn").textContent = `⏱ 생존 모드 · Survival — start with 1 word${sb ? `  (best ${Math.floor(sb / 60)}:${String(sb % 60).padStart(2, "0")})` : ""}`;
 }
@@ -1958,7 +2024,7 @@ function update(rdt){
   survivalTick(dt);
   escapeTick(dt, rdt);
   fortressTick(dt, rdt);
-  heistTick(dt, rdt);
+  deerTick(dt, rdt);
   coopTick(dt, rdt);
   mmT -= rdt; if (mmT <= 0) { mmT = .1; drawMinimap(); }
   // ---- FX ----
@@ -1990,4 +2056,4 @@ function frame(){
 drawGunScreen();
 requestAnimationFrame(frame);
 window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
-window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, spawnHeistBoss, bossLockHit, htowerKey, openBrief, heist: () => G.heist, heistWave, heistUse, heistInteract, spawnSafe, crackSafe, breakTower, repairTower, heistTarget, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
+window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, openBrief, sanct: () => G.sanct, deerWave, deerUse, deerInteract, deerAct, placeTrap, ammoQuiz, trapQuiz, openDemon, closeDemon, learnDeerWord, spawnDeerBoss, lessonOptions, renderMissions, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
