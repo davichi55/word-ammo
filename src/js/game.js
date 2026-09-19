@@ -300,7 +300,7 @@ function onKill(a, byTower = false){
   if (G.speaking === a) { $("#helperText").dataset.for = ""; helperHide = 1.2; }
   if (G.tut) { if (G.tut.step === "kill") tutNext("dodge"); else if (G.tut.step === "dodge" || G.tut.step === "dodge2") tutNext("done"); }
   else if (G.mode === "escape") { if (a.special) specialKill(a); renderTop(); }
-  else if (G.mode === "deer") { if (a.special) deerBossKill(a); else G.waveKills++; renderTop(); }
+  else if (G.mode === "deer") { if (a.special) deerBossKill(a); else { G.waveKills++; G.coins++; } renderTop(); }   // 💰 1 gold per alien
   else if (G.mode === "fortress") { if (a.special) bossKill(a); else { G.waveKills++; G.coins++; } renderTop(); }
   else if (G.mode === "survival") { if (G.kills >= G.nextUnlockAt) { G.nextUnlockAt += 5; unlockWord(); } renderTop(); }
   else { renderTop(); if (!G.aliens.some(x => !x.dead)) setTimeout(victory, 1600); }
@@ -379,7 +379,7 @@ function renderQuick(){
 function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
 function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
   if (G.mode === "deer" && G.sanct) { const b = G.bossOut && G.aliens.find(a => a.special && !a.dead);
-    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? `👑 ❤ ${Math.max(0, Math.ceil(b.hp))}` : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
+    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? `👑 ❤ ${Math.max(0, Math.ceil(b.hp))}` : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
     $("#scoreLbl").textContent = `🦌 ❤ ${Math.ceil(G.sanct.hp)}`; return; }
   if (G.mode === "fortress") { const z = world.zones[G.zone];
     $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
@@ -391,8 +391,9 @@ function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
 
 /* ================================ backpack ================================ */
 function openBackpack(){
-  if (!player.hasGun || G.over) return;
-  G.backpackOpen = true; G.timeScale = .15; SFX.open();
+  if ((!player.hasGun && G.mode !== "deer") || G.over) return;   // the sanctuary has no gun, but you can still look at your words
+  G.backpackOpen = true; G.timeScale = G.mode === "deer" ? .3 : .15; SFX.open();
+  $("#bpFoot").innerHTML = G.mode === "deer" ? "🎒 지금까지 배운 단어 · every word you know (🦌 = taught by the deer) · click a word to hear it · Tab = close" : "Tab 닫기 · 클릭해서 장전 · ←/→ 탭";
   $("#backpack").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow"); $("#clickToPlay").hidden = true; $("#bpGrid").scrollTop = 0;
   // start on the tab of the current loaded word, or keep the last tab
   renderBackpack();
@@ -442,7 +443,7 @@ function renderBackpack(){
     const ini = group(w);
     if (ini !== lastIni) { html += `<div class="ini" data-ini="${esc(ini)}">${esc(ini)}</div>`; lastIni = ini; }   // 명사 / 동사 / … headers
     const main = settings.labels === "ko" ? w.kr : meaning(w);
-    html += `<button data-w="${w.id}" class="${G.loaded && G.loaded.id === w.id ? "cur" : ""}${tutWord && tutWord.id === w.id ? " hintWord" : ""}"><span class="w">${esc(main)}</span>${G.newIds && G.newIds.has(w.id) ? '<span class="new">NEW</span>' : ""}${stats[w.id] && stats[w.id].k ? `<span class="m">${esc(settings.labels === "ko" ? meaning(w) : w.kr)}</span>` : ""}</button>`;   // defeated words show their translation
+    html += `<button data-w="${w.id}" class="${G.loaded && G.loaded.id === w.id ? "cur" : ""}${tutWord && tutWord.id === w.id ? " hintWord" : ""}"><span class="w">${esc(main)}</span>${G.newIds && G.newIds.has(w.id) ? '<span class="new">NEW</span>' : ""}${G.mode === "deer" && G.sanct && G.sanct.learned.includes(w.id) ? '<span class="new">🦌</span>' : ""}${stats[w.id] && stats[w.id].k ? `<span class="m">${esc(settings.labels === "ko" ? meaning(w) : w.kr)}</span>` : ""}</button>`;   // defeated words show their translation
   }
   $("#bpGrid").innerHTML = html || `<div style="color:#9a93c2">—</div>`;
 }
@@ -454,7 +455,9 @@ $("#bpTabs").onclick = e => {
   const j = e.target.closest("[data-jump]");
   if (j) { const h = [...document.querySelectorAll("#bpGrid .ini")].find(x => x.dataset.ini === j.dataset.jump); if (h) h.scrollIntoView({ block: "start" }); SFX.select(); return; }
   const b = e.target.closest("[data-tab]"); if (!b) return; G.bpTab = +b.dataset.tab; SFX.select(); renderBackpack(); $("#bpGrid").scrollTop = 0; };
-$("#bpGrid").onclick = e => { const b = e.target.closest("[data-w]"); if (!b) return; const w = D.words.find(x => x.id === b.dataset.w); closeBackpack(true); loadWord(w); };
+$("#bpGrid").onclick = e => { const b = e.target.closest("[data-w]"); if (!b) return; const w = D.words.find(x => x.id === b.dataset.w);
+  if (G.mode === "deer") { say([wordClip(w.id)], { interrupt: true }); return; }   // no ammo to load here: just hear it
+  closeBackpack(true); loadWord(w); };
 $("#bpClose").onclick = () => closeBackpack(true);
 
 /* ================================ input ================================ */
@@ -490,6 +493,7 @@ addEventListener("keydown", e => {
       const n = /^(?:Digit|Numpad)([1-4])$/.exec(k); if (n && G.waveWords[+n[1] - 1]) say([wordClip(G.waveWords[+n[1] - 1].id)], { interrupt: true }); return; }
     if (G.panel === "demon") { if (k === "KeyQ" || k === "Escape") { closeDemon(); objectiveFlash("🦌 수업을 그만뒀어요 · Lesson stopped"); } return; }
     if (G.panel === "pedestal" || G.panel === "workshop") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct(G.panel === "pedestal" ? "ammo" : "trap"); else if (k === "Escape") closePanel(); return; }
+    if (G.panel === "shelter") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct("train"); else if (k === "Digit2" || k === "Numpad2") deerAct("charge"); else if (k === "Escape") closePanel(); return; }
     if (G.panel === "lessons") { const n = /^(?:Digit|Numpad)([1-6])$/.exec(k); if (n) deerAct("lesson" + (+n[1] - 1)); else if (k === "Escape" || k === "KeyE") closePanel(); return; }
     if (G.panel === "lessoncard") { if (k === "KeyE" || k === "Space" || k === "Enter") lessonQuiz(); else if (k === "Escape" || k === "KeyQ") closePanel(); return; }
     // any build / repair / safe quiz can be left (Esc, Q or the Exit button) — only a hound bite can't
@@ -606,6 +610,7 @@ function drawMinimapStatic(){
   g2.fillStyle = "#15131f"; g2.fillRect(0, 0, MM.S, MM.S);
   const rect = (x0, x1, z0, z1, col) => { const [a, b] = mmXY(x0, z0), [c2, d] = mmXY(x1, z1); g2.fillStyle = col; g2.fillRect(a, b, c2 - a, d - b); };
   for (const [x0, x1, z0, z1, col] of world.mm.areas || []) rect(x0, x1, z0, z1, col);   // raised ground, stairs & ramps
+  if (world.mm.road2) { g2.strokeStyle = "#ffc26b"; g2.lineWidth = 2.5; g2.beginPath(); world.mm.road2.forEach(([x, z], i) => { const [a, b] = mmXY(x, z); if (i) g2.lineTo(a, b); else g2.moveTo(a, b); }); g2.stroke(); }
   if (world.mm.road) { g2.strokeStyle = "#5fd4ff"; g2.lineWidth = 3; g2.beginPath(); world.mm.road.forEach(([x, z], i) => { const [a, b] = mmXY(x, z); if (i) g2.lineTo(a, b); else g2.moveTo(a, b); }); g2.stroke(); }
   for (const b of world.mm.solid) rect(b[0], b[1], b[2], b[3], "#4a4560");
   for (const b of world.mm.enter) { rect(b[0], b[1], b[2], b[3], "#2d4a47"); }
@@ -621,6 +626,7 @@ function drawMinimap(){
     const [x, y] = mmXY(a.pos.x, a.pos.z); g2.fillStyle = a.active ? "#ff4d6d" : "rgba(255,77,109,.45)"; g2.beginPath(); g2.arc(x, y, a.active ? 3 : 2.2, 0, 7); g2.fill(); }
   if (G.mode === "deer" && G.sanct) { const S = G.sanct, dot = (o, col, r) => { const [x, y] = mmXY(o.x, o.z); g2.fillStyle = col; g2.beginPath(); g2.arc(x, y, r, 0, 7); g2.fill(); };
     for (const t of S.traps) dot(t, t.cd > 0 ? "#6a5a4a" : "#ff9a3a", 2.8);
+    for (const r of S.runners) if (r.delay <= 0) dot(r, "#ffd08a", 2); dot(world.hive, "#ff4fd8", 4); dot(world.shelter, "#ffd08a", 3.2);
     dot(world.pedestal, "#b388ff", 3.2); dot(world.workshop, "#ffb070", 3.2); dot(world.deer, G.time - S.lastHit < .4 ? "#ff4d6d" : "#9fdcff", 4.5); }
   if (G.mode === "fortress" || G.mode === "deer") { for (const p of fort.pads) { const [x, y] = mmXY(p.x, p.z); g2.strokeStyle = "#7cf7d4"; g2.strokeRect(x - 3, y - 3, 6, 6); }
     for (const t of fort.towers) { const [x, y] = mmXY(t.x, t.z); g2.fillStyle = t.broken ? "#8a3a4a" : "#7cf7d4"; g2.fillRect(x - 3, y - 3, 6, 6); }
@@ -1042,7 +1048,7 @@ function nearestInteract(){
   return null;
 }
 // ---- panels on the paper (#note): tower quiz, tower word picker, shop. The world slows, it doesn't stop. ----
-const CLOSABLE = new Set(["picker", "shop", "pedestal", "workshop", "lessons"]), EXITABLE = new Set(["towerquiz", "ammoq", "trapq", "buildq", "lessonq"]);
+const CLOSABLE = new Set(["picker", "shop", "pedestal", "workshop", "lessons", "shelter"]), EXITABLE = new Set(["towerquiz", "ammoq", "trapq", "buildq", "lessonq", "trainq"]);
 function openPanel(kind, head){
   G.noteOpen = true; G.panel = kind; G.timeScale = G.mode === "deer" ? .3 : .15; document.exitPointerLock && document.exitPointerLock();
   $("#note .nHead").textContent = head; $("#noteClose").hidden = !CLOSABLE.has(kind) && !EXITABLE.has(kind); $("#noteClose").textContent = EXITABLE.has(kind) ? "나가기 · Exit (Esc / Q)" : "닫기 · Close (Esc)";
@@ -1291,7 +1297,11 @@ function deerStart(){
   // the deer, the pedestal crystal, signs
   S.deerMesh = deerMesh(); S.deerMesh.position.set(W.deer.x, W.deer.y + .4, W.deer.z); scene.add(S.deerMesh); S.deerMesh.scale.setScalar(deerSize());
   const tag = (text, sub, x, y, z, sc = 1) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(text, sub), transparent: true, depthWrite: false })); s.position.set(x, y, z); s.scale.set(1.8 * sc, .9 * sc, 1); scene.add(s); return s; };
-  S.signs = [tag("🦌 E", "수업 · lessons", W.deer.x, W.deer.y + 4.6, W.deer.z), tag("💎 E", "탄약 · ammo", W.pedestal.x, W.pedestal.y + 3.6, W.pedestal.z), tag("🔧 E", "함정 · traps", W.workshop.x, W.workshop.y + 5.2, W.workshop.z)];
+  S.signs = [tag("🦌 E", "수업 · lessons", W.deer.x, W.deer.y + 4.6, W.deer.z), tag("💎 E", "탄약 · ammo", W.pedestal.x, W.pedestal.y + 3.6, W.pedestal.z), tag("🔧 E", "함정 · traps", W.workshop.x, W.workshop.y + 5.2, W.workshop.z), tag("🦌 E", "목장 · shelter", W.shelter.x, W.shelter.y + 6.4, W.shelter.z - 4)];
+  // the attack lane: a herd that gathers at the shelter, and the hive's gate
+  Object.assign(S, { herd: [], runners: [], gateHp: 40, gateMax: 40, turretCd: 0, hiveBroken: false });
+  W.hive.membrane.opacity = .55; W.hive.gate.rotation.x = 0; W.hive.gate.position.y = 0;
+  S.gateSign = tag("🚪 40/40", "외계인 둥지 · hive gate", W.hive.x, 9.5, W.hive.z - .5, 1.8); S.signs.push(S.gateSign);
   S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.36), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
   S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(2, 2, 1); S.crystal.add(S.crystalGlow);
   S.trapBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
@@ -1406,15 +1416,15 @@ function trapsTick(dt){
 function lessonOptions(){
   const S = G.sanct, out = [];
   for (const t of TECHS) { const w = S.techWord[t.id]; if (!w || S.tech.has(t.id) || (t.need && !S.tech.has(t.need))) continue; out.push({ tech: t, w }); }
-  const g = S.growWords.find(w => !G.unlocked.includes(w)); if (g) out.push({ tech: null, w: g });
-  return out.slice(0, 6);
+  const g = S.growWords.find(w => !G.unlocked.includes(w));
+  return [...out.slice(0, g ? 5 : 6), ...(g ? [{ tech: null, w: g }] : [])];   // the free "just grow" lesson is always on the list
 }
 function openLessons(){ openPanel("lessons", "🦌 사슴의 수업 · The deer's lessons"); renderLessons(); }
 function renderLessons(){
   const S = G.sanct, opts = lessonOptions(); G.lessonOpts = opts;
-  $("#noteBody").innerHTML = `<div class="qHead">🦌 ${G.unlocked.length} words · size ${deerSize().toFixed(2)} · ${S.learned.length} lessons done</div>
+  $("#noteBody").innerHTML = `<div class="qHead">🦌 ${G.unlocked.length} words · size ${deerSize().toFixed(2)} · ${S.learned.length} lessons · 💰 ${G.coins} (1 per alien)</div>
     <div class="qPrompt"><small>새 단어 하나 + 문제 2개 + 퇴마사 한 판 (아는 단어 모두) · one new word, 2 questions, then a 퇴마사 fight with every word you know. Q = quit anytime.</small></div>
-    <div class="shop">${opts.map((o, i) => `<button data-act="lesson${i}"><span class="k">${i + 1}</span><b>${o.tech ? `${o.tech.icon} ${esc(o.tech.ko)}` : "🌱 그냥 자라기 · just grow"}</b> <small>${o.tech ? esc(o.tech.en) + " — " : ""}must know <b>${esc(o.w.kr)}</b></small></button>`).join("") || "<div>🎓 사슴이 가르칠 게 없어요 · the deer has taught you everything!</div>"}</div>`;
+    <div class="shop">${opts.map((o, i) => `<button data-act="lesson${i}" ${o.tech && G.coins < techCost() ? "disabled" : ""}><span class="k">${i + 1}</span><b>${o.tech ? `${o.tech.icon} ${esc(o.tech.ko)}` : "🌱 그냥 자라기 · just grow"}</b> <small>${o.tech ? esc(o.tech.en) + " — " : ""}must know <b>${esc(o.w.kr)}</b></small><span class="c">${o.tech ? "💰 " + techCost() : "free"}</span></button>`).join("") || "<div>🎓 사슴이 가르칠 게 없어요 · the deer has taught you everything!</div>"}</div>`;
 }
 function lessonCard(o){
   openPanel("lessoncard", "🦌 새 단어 · A word from the deer"); G.lesson = o; const w = o.w, C = CAT[w.cat];
@@ -1445,7 +1455,8 @@ addEventListener("message", e => {
 });
 function learnDeerWord(o){
   const S = G.sanct, w = o.w; if (G.unlocked.includes(w)) return;
-  G.unlocked.push(w); markKill(w); S.learned.push(w.id); if (o.tech) applyTech(o.tech);
+  G.unlocked.push(w); markKill(w); S.learned.push(w.id);
+  if (o.tech) { G.coins = Math.max(0, G.coins - techCost()); applyTech(o.tech); }   // paid when the lesson succeeds
   growDeer(); SFX.pickup(); burst(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 1.5), 0x9fdcff, 90, 8);
   floater(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 3), "🦌 +1", "#9fdcff", 34, 1.6);
   objective(`🎓 <b>${esc(w.kr)}</b> = ${esc(meaning(w))} · ${o.tech ? `${o.tech.icon} ${esc(o.tech.ko)} unlocked — ${esc(o.tech.en)}` : "🌱 the deer grew"}`);
@@ -1486,7 +1497,7 @@ function deerBossKill(a){
   const v = $("#vignette"); v.style.boxShadow = "inset 0 0 400px 200px rgba(200,235,255,.8)"; setTimeout(() => v.style.boxShadow = "", 350);
   for (let i = 0; i < 4; i++) burst(a.aimPoint(), [0x9fdcff, 0xffffff, 0xff9a3a, 0x7cf7d4][i], 120, 16 + i * 4);
   for (const o of G.aliens) if (!o.dead && o !== a) { burst(o.aimPoint(), 0x9fdcff, 30, 7); o.die(); G.kills++; }
-  G.bossOut = false; S.nextWaveT = 4;
+  G.bossOut = false; S.nextWaveT = 4; G.coins += 20;
   objective("💥 보스 처치! · Boss down — the next wave brings 4 new words"); renderTop();
 }
 function spawnDeerBoss(){
@@ -1506,6 +1517,7 @@ function deerInteract(){
   for (const p of fort.pads) if (near(p, 2.2)) return { kind: "build", o: p, label: "E · 🔨 탑 짓기 — 문제 2개 · build a tower (2 questions)" };
   if (near(W.pedestal, 3)) return { kind: "pedestal", label: `E · 💎 탄약 · ammo (${S.ammo}) — towers & traps` };
   if (near(W.workshop, 3.6)) return { kind: "workshop", label: "E · 🔧 작업장 · workshop — build traps" };
+  if (near(W.shelter, 3.8)) return { kind: "shelter", label: `E · 🦌 사슴 목장 · deer shelter — herd ${S.herd.length}, hive gate ❤ ${S.gateHp}` };
   if (near(W.deer, 4.5)) return { kind: "lessons", label: "E · 🦌 사슴의 수업 · learn from the deer" };
   for (const t of fort.towers) if (near(t, 2.6)) return { kind: "none", label: `🗼 Lv ${towerLv() + 1} · ${t.kills || 0} kills · 💎 ${S.ammo} shared ammo` };
   return null;
@@ -1517,11 +1529,16 @@ function deerUse(it){
   else if (it.kind === "pedestal") openPedestal();
   else if (it.kind === "workshop") openWorkshop();
   else if (it.kind === "lessons") openLessons();
+  else if (it.kind === "shelter") openShelter();
 }
 function deerAct(act){
   if (act === "ammo" && G.panel === "pedestal") ammoQuiz();
   else if (act === "trap" && G.panel === "workshop") trapQuiz();
-  else if (/^lesson\d$/.test(act) && G.panel === "lessons") { const o = (G.lessonOpts || [])[+act.slice(6)]; if (o) lessonCard(o); }
+  else if (/^lesson\d$/.test(act) && G.panel === "lessons") { const o = (G.lessonOpts || [])[+act.slice(6)];
+    if (o && o.tech && G.coins < techCost()) { SFX.empty(); objectiveFlash(`💰 ${techCost()} 필요해요 · You need 💰${techCost()} (1 per alien)`); return; }
+    if (o) lessonCard(o); }
+  else if (act === "train" && G.panel === "shelter") trainQuiz();
+  else if (act === "charge" && G.panel === "shelter") charge();
 }
 // ---- missions (top left) ----
 function renderMissions(){
@@ -1534,12 +1551,14 @@ function renderMissions(){
     ${row(fort.towers.length >= fort.towers.length + fort.pads.length, `🗼 탑 짓기 · build towers <b>${fort.towers.length}/${fort.towers.length + fort.pads.length}</b> <small>(🔨 E)</small>`)}
     ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
     ${row(hits * dmg >= bossHp, `🪤 보스 · boss ❤ <b>${bossHp}</b> — traps ${hits} × ${dmg} = ${hits * dmg}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
-    ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b>`) : ""}`;
+    ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b> · 💰 ${G.coins}/${techCost()}`) : ""}
+    ${row(S.hiveBroken, `⚔️ 공격 · attack: herd <b>${S.herd.length}</b>${S.runners.length ? ` (+${S.runners.length} charging)` : ""} · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax} <small>(shelter)</small>`)}
+    <div class="mFoot">Tab 🎒 내 단어 · your words</div>`;
 }
 function deerTick(dt, rdt){
   if (G.mode !== "deer" || G.over || !G.sanct) return;
   const S = G.sanct;
-  towersTick(dt); trapsTick(dt);
+  towersTick(dt); trapsTick(dt); runnersTick(dt);
   for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
   // 🔧 a light over the workshop while your traps can't kill this wave's boss
   const bossLeft = G.bossOut ? (G.aliens.find(a => a.special && !a.dead) || { hp: 0 }).hp : S.bossHp;
@@ -1576,9 +1595,71 @@ function deerTick(dt, rdt){
     if (pack > 1) G.spawnT += .8;
   }
 }
+// ---- ⚔️ the attack lane: train deer at the shelter (8 questions each), gather a herd, charge the hive ----
+const techCost = () => 40 * ((G.sanct ? G.sanct.tech.size : 0) + 1);   // 40, 80, 120 … gold
+function openShelter(){ openPanel("shelter", "🦌 사슴 목장 · Deer shelter"); renderShelter(); }
+function renderShelter(){
+  const S = G.sanct, n = S.herd.length;
+  $("#noteBody").innerHTML = `<div class="qHead">🦌 herd <b>${n}</b> · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax}</div>
+    <div class="dList"><div>둥지의 탑이 가까이 온 사슴을 쏴요 (약 1초에 1마리) · the hive's spire shoots deer near the hive, about 1 per second — a big herd loses a smaller share</div>
+    <div>문에 닿은 사슴 1마리 = −1 · every deer that reaches the gate: −1. Break the gate to win!</div></div>
+    <div class="shop" style="margin-top:10px"><button data-act="train"><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions on your words</small><span class="c">🦌 +1</span></button>
+    <button data-act="charge" ${n ? "" : "disabled"}><span class="k">2</span><b>돌격! · Charge!</b> <small>send the whole herd down the gold road</small><span class="c">🦌 ×${n}</span></button></div>`;
+}
+function trainQuiz(){
+  const qs = [], used = new Set();
+  for (let i = 0; i < 8; i++) { let w = pickQuizWord(); for (let k = 0; k < 5 && used.has(w.id); k++) w = pickQuizWord(); used.add(w.id); qs.push(knownQuestion(w)); }
+  deerQuiz("trainq", "🦌 사슴 훈련 · Training (8)", qs, () => { addHerdDeer(); openShelter(); });
+}
+function addHerdDeer(){
+  const S = G.sanct, i = S.herd.length, g = deerMesh(); g.scale.setScalar(.42);
+  g.position.set(world.rally.x - 2.4 + (i % 5) * 1.2, world.rally.y, world.rally.z - 2 + Math.floor(i / 5) % 6 * 1.2); g.rotation.y = Math.PI / 2 + rnd(-.3, .3); g.visible = i < 30;
+  scene.add(g); S.herd.push(g); SFX.pickup(); objectiveFlash(`🦌 +1 · 무리 · herd ${S.herd.length}`); renderMissions();
+}
+function charge(){
+  const S = G.sanct, n = S.herd.length; if (!n) return;
+  S.herd.forEach((g, i) => { g.visible = true; S.runners.push({ g, wp: 0, x: g.position.x, z: g.position.z, delay: i * .18 }); });
+  S.herd = []; closePanel(); SFX.charge();
+  objectiveFlash(`⚔️ 돌격! · ${n} deer charge the hive!`); renderMissions();
+}
+function runnersTick(dt){
+  const S = G.sanct, R = world.road2, Hv = world.hive, T = Hv.turret;
+  S.turretCd -= dt;
+  for (const r of S.runners) {
+    if (r.delay > 0) { r.delay -= dt; continue; }
+    const p = R[Math.min(r.wp, R.length - 1)], dx = p.x - r.x, dz = p.z - r.z, d = Math.hypot(dx, dz), sp = 7 * dt;
+    if (d < sp + .3) { r.wp++; if (r.wp >= R.length) { hitGate(); r.done = true; continue; } }
+    else { r.x += dx / d * sp; r.z += dz / d * sp; r.g.rotation.y = Math.atan2(dx, dz); }
+    r.g.position.set(r.x, world.groundY(r.x, r.z) + Math.abs(Math.sin(G.time * 14 + r.x)) * .25, r.z);
+  }
+  // the spire spits at the nearest running deer within 28 m
+  if (S.turretCd <= 0) {
+    let best = null, bd = 28;
+    for (const r of S.runners) { if (r.done || r.delay > 0) continue; const d = Math.hypot(r.x - T.x, r.z - T.z); if (d < bd) { bd = d; best = r; } }
+    if (best) { S.turretCd = 1; const at = best.g.position.clone().setY(best.g.position.y + .6);
+      tracer(new THREE.Vector3(T.x, T.y, T.z), at, 0xff4fd8, true); burst(at, 0xff4fd8, 22, 5); best.done = true; }
+    else S.turretCd = .2;
+  }
+  for (const r of S.runners) if (r.done) scene.remove(r.g);
+  S.runners = S.runners.filter(r => !r.done);
+  Hv.eye.material.color.setHex(S.turretCd > .75 ? 0xffffff : 0xff4fd8);
+}
+function hitGate(){
+  const S = G.sanct, Hv = world.hive; if (S.hiveBroken) return;
+  S.gateHp = Math.max(0, S.gateHp - 1); burst(new THREE.Vector3(Hv.x, 2.5, Hv.z), 0x9fdcff, 30, 6);
+  Hv.membrane.opacity = .15 + .4 * S.gateHp / S.gateMax;
+  const old = S.gateSign.material.map; S.gateSign.material.map = signTexture(`🚪 ${S.gateHp}/${S.gateMax}`, "외계인 둥지 · hive gate"); S.gateSign.material.needsUpdate = true; old.dispose();
+  if (S.gateHp > 0) return;
+  S.hiveBroken = true; G.won = true; SFX.slam(); SFX.kill();
+  for (let i = 0; i < 5; i++) burst(new THREE.Vector3(Hv.x, 3, Hv.z), [0xff4fd8, 0xffffff, 0x9fdcff, 0xffcf5c, 0x7cf7d4][i], 140, 12 + i * 4);
+  Hv.gate.rotation.x = -1.2; Hv.gate.position.y = -1.5; Hv.membrane.opacity = 0;
+  objective("⚔️ 둥지의 문이 무너졌어요! · The hive gate fell — the invasion is over!");
+  setTimeout(() => { if (G.mode === "deer" && G.running) gameOver(); }, 3000);
+}
 function clearDeer(){
   const S = G.sanct;
-  if (S) { for (const t of S.traps) scene.remove(t.g); if (S.trapBeam) scene.remove(S.trapBeam); if (S.deerMesh) scene.remove(S.deerMesh); (S.signs || []).forEach(s => scene.remove(s)); if (S.crystal) scene.remove(S.crystal); }
+  if (S) { for (const g of S.herd || []) scene.remove(g); for (const r of S.runners || []) scene.remove(r.g);
+    for (const t of S.traps) scene.remove(t.g); if (S.trapBeam) scene.remove(S.trapBeam); if (S.deerMesh) scene.remove(S.deerMesh); (S.signs || []).forEach(s => scene.remove(s)); if (S.crystal) scene.remove(S.crystal); }
   if (G.demon) { G.demon.f.remove(); G.demon = null; }
   G.sanct = null; G.waveWords = [];
 }
@@ -1913,7 +1994,7 @@ function gameOver(){
   } else $("#overStats").innerHTML = [["★ " + G.score, "score"], [G.kills, "aliens"], [G.perfect, "perfect"], [(G.total - G.aliens.filter(a => !a.dead).length) + "/" + G.total, "cleared"]].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
   const list = [...G.runMissed.keys()].map(id => D.words.find(w => w.id === id));
   if (!shirtMode()) $("#reviewList").innerHTML = list.length ? list.map(w => `<div><button data-say="${w.id}">🔊</button><b>${esc(w.kr)}</b><span>${esc(meaning(w))}</span><small>${CAT[w.cat].icon}</small></div>`).join("") : `<div>👏 no weak words this run</div>`;
-  $("#over .logo").textContent = G.mode === "district" && G.won ? "구역 정화 완료! · District cleared" : G.mode === "survival" ? "⏱ 생존 끝 · Survival over" : G.mode === "escape" ? (G.won ? "🏃 탈출 성공! · You escaped" : "🏃 탈출 실패 · Didn't make it") : G.mode === "fortress" ? `🏰 요새 함락 · Wave ${G.wave}` : G.mode === "deer" ? (G.won ? "🦌 사슴이 모든 단어를 알아요! · Your deer knows every word" : `🦌 사슴이 쓰러졌어요 · The deer fell — wave ${G.wave}`) : "Game over";
+  $("#over .logo").textContent = G.mode === "district" && G.won ? "구역 정화 완료! · District cleared" : G.mode === "survival" ? "⏱ 생존 끝 · Survival over" : G.mode === "escape" ? (G.won ? "🏃 탈출 성공! · You escaped" : "🏃 탈출 실패 · Didn't make it") : G.mode === "fortress" ? `🏰 요새 함락 · Wave ${G.wave}` : G.mode === "deer" ? (G.won ? (G.sanct && G.sanct.hiveBroken ? "⚔️ 둥지를 부쉈어요! · You broke the hive — you win!" : "🦌 사슴이 모든 단어를 알아요! · Your deer knows every word") : `🦌 사슴이 쓰러졌어요 · The deer fell — wave ${G.wave}`) : "Game over";
   setTimeout(() => { $("#hud").hidden = true; $("#over").hidden = false; }, 900);
 }
 $("#reviewList").onclick = e => { const b = e.target.closest("[data-say]"); if (b) say([wordClip(b.dataset.say)], { interrupt: true }); };
@@ -2074,4 +2155,4 @@ function frame(){
 drawGunScreen();
 requestAnimationFrame(frame);
 window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
-window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, openBrief, sanct: () => G.sanct, deerWave, deerUse, deerInteract, deerAct, placeTrap, ammoQuiz, trapQuiz, openDemon, closeDemon, learnDeerWord, spawnDeerBoss, lessonOptions, renderMissions, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
+window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, openBrief, addHerdDeer, charge, hitGate, sanct: () => G.sanct, deerWave, deerUse, deerInteract, deerAct, placeTrap, ammoQuiz, trapQuiz, openDemon, closeDemon, learnDeerWord, spawnDeerBoss, lessonOptions, renderMissions, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };

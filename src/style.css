@@ -224,3 +224,4 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #missions small{color:#8aa0c0}
 #note .dList{display:flex;flex-direction:column;gap:4px;margin:8px 0;font-size:15px;color:#4a3210}
 #lessonFrame{position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:30;background:#1a0b2e}
+#missions .mFoot{margin-top:3px;color:#8aa0c0;font-size:12px}

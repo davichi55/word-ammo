@@ -12,26 +12,30 @@ const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 214
 const rr = (a, b) => a + rand() * (b - a);
 
 const H = 4;   // the sanctuary terrace
-const BOUNDS = { x0: -50, x1: 50, z0: -70, z1: 70 };
+const BOUNDS = { x0: -50, x1: 100, z0: -70, z1: 70 };
 const SURF = [
   { x0: -50, x1: 50, z0: -70, z1: -40, h: H },                          // sanctuary terrace
   { ramp: true, x0: -4, x1: 4, z0: -40, z1: -28, h0: H, h1: 0 },        // the ramp up (part of the road)
+  { ramp: "x", x0: 50, x1: 62, z0: -58, z1: -50, h0: H, h1: 0 },        // the east ramp down to the attack lane
 ];
 function groundY(x, z){
   let y = 0;
   for (const s of SURF) {
     if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
-    const h = s.ramp ? s.h0 + (s.h1 - s.h0) * (z - s.z0) / (s.z1 - s.z0) : s.h;
+    const h = s.ramp === "x" ? s.h0 + (s.h1 - s.h0) * (x - s.x0) / (s.x1 - s.x0) : s.ramp ? s.h0 + (s.h1 - s.h0) * (z - s.z0) / (s.z1 - s.z0) : s.h;
     if (h > y) y = h;
   }
   return y;
 }
 // the road the aliens follow, from the gate to the deer
 const ROAD = [[0, 66], [0, 46], [-28, 40], [-30, 18], [26, 12], [28, -10], [0, -18], [0, -28], [0, -42], [0, -53]];
-function roadDist(x, z){
+// the attack lane: from the deer shelter down the east ramp through the east valley to the alien hive's gate
+const ROAD2 = [[44, -54], [50, -54], [62, -54], [78, -40], [72, -12], [88, 14], [80, 40], [78, 52]];
+const SHELTER = { x: 33, z: -58.5 }, RALLY = { x: 41, z: -62 }, HIVE = { x: 78, z: 57.5 };
+function roadDist(x, z, R = ROAD){
   let best = Infinity;
-  for (let i = 0; i < ROAD.length - 1; i++) {
-    const [ax, az] = ROAD[i], [bx, bz] = ROAD[i + 1], vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz;
+  for (let i = 0; i < R.length - 1; i++) {
+    const [ax, az] = R[i], [bx, bz] = R[i + 1], vx = bx - ax, vz = bz - az, L2 = vx * vx + vz * vz;
     const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / L2)), px = ax + vx * t, pz = az + vz * t;
     best = Math.min(best, Math.hypot(x - px, z - pz));
   }
@@ -45,7 +49,7 @@ export function buildSanctuaryWorld(root){
   const colliders = [];
   const addCol = (x0, x1, z0, z1, y0, y1) => colliders.push({ minX: Math.min(x0, x1), maxX: Math.max(x0, x1), minZ: Math.min(z0, z1), maxZ: Math.max(z0, z1), minY: y0, maxY: y1 });
   const lightSpots = [];
-  const mm = { solid: [], enter: [], doors: [], areas: [[-50, 50, -70, -40, "#243049"], [-4, 4, -40, -28, "#34466a"]], road: ROAD };
+  const mm = { solid: [[66, 90, 58, 70]], enter: [], doors: [], areas: [[-50, 50, -70, -40, "#243049"], [-4, 4, -40, -28, "#34466a"], [50, 62, -58, -50, "#34466a"], [50, 54, -40, 70, "#11141c"]], road: ROAD, road2: ROAD2 };
   const env = { bg: new THREE.Color(0x0b1628), fog: new THREE.FogExp2(0x18263e, 0.012) };
 
   // ---- sky: moon, stars, an aurora ----
@@ -100,20 +104,35 @@ export function buildSanctuaryWorld(root){
   };
 
   // ---- ground, terrace, ramp, parapet ----
-  plane(-50, 50, -40, 70, 0, snowMat, 8);
+  plane(-50, 50, -40, 70, 0, snowMat, 8); plane(50, 100, -70, 70, 0, snowMat, 8);   // + the east valley (attack lane)
+  // east ramp: steps + side walls, and a parapet on the rest of the terrace's east edge
+  for (let i = 0; i < 12; i++) { const xa = 50 + i, xb = 51 + i, top = Math.max(groundY(xa + .01, -54), groundY(xb - .01, -54));
+    box(xa, xb, 0, top, -58, -50, stoneMat, 3); plane(xa, xb, -58, -50, top + .01, roadMat, 3);
+    for (const z of [-58.5, -50]) { box(xa, xb, 0, top + 1.1, z, z + .5, stoneMat, 3); addCol(xa, xb, z, z + .5, 0, top + 1.2); } }
+  for (const [z0, z1] of [[-70, -58.5], [-49.5, -40]]) { box(49.5, 50, H, H + 1.1, z0, z1, stoneMat); addCol(49.5, 50, z0, z1, H, H + 1.2); }
   box(-50, 50, 0, H, -70, -40, cliffMat); plane(-50, 50, -70, -40, H + .01, snowMat, 8);
   for (let i = 0; i < 12; i++) { const za = -40 + 12 * i / 12, zb = -40 + 12 * (i + 1) / 12, top = Math.max(groundY(0, za + .01), groundY(0, zb - .01));
     box(-4, 4, 0, top, za, zb, stoneMat, 3); plane(-4, 4, za, zb, top + .01, roadMat, 3);
     for (const x of [-4.5, 4]) { box(x, x + .5, 0, top + 1.1, za, zb, stoneMat, 3); addCol(x, x + .5, za, zb, 0, top + 1.2); } }   // side walls follow the slope
   for (const [a0, a1] of [[-50, -4.5], [4.5, 50]]) { box(a0, a1, H, H + 1.1, -40.5, -40, stoneMat); addCol(a0, a1, -40.5, -40, H, H + 1.2); }
   // valley walls (cliffs) with a gate in the south
-  for (const [x0, x1, z0, z1] of [[-54, -50, -74, 74], [50, 54, -74, 74], [-54, 54, -74, -70], [-54, -4, 70, 74], [4, 54, 70, 74]]) { box(x0, x1, 0, 16, z0, z1, cliffMat, 8); addCol(x0, x1, z0, z1, -5, 30); }
+  for (const [x0, x1, z0, z1] of [[-54, -50, -74, 74], [50, 54, -40, 74], [-54, 104, -74, -70], [-54, -4, 70, 74], [4, 104, 70, 74], [100, 104, -74, 74]]) { box(x0, x1, 0, 16, z0, z1, cliffMat, 8); addCol(x0, x1, z0, z1, -5, 30); }
   for (const x of [-5.5, 4.5]) box(x, x + 1, 0, 11, 69.5, 74.5, stoneMat);
   box(-5.5, 5.5, 9.5, 11.5, 69.5, 74.5, stoneMat);   // gate arch
   addCol(-4, 4, 73, 74, 0, 30);                       // (nobody leaves through the gate)
 
-  // ---- the glowing road ----
+  // ---- the glowing roads (ice-blue: theirs, gold: yours) ----
   const roadY = (x, z) => groundY(x, z) + .03;
+  const edge2Mat = new THREE.MeshBasicMaterial({ color: 0xffc26b, transparent: true, opacity: .8 });
+  for (let i = 0; i < ROAD2.length - 1; i++) {
+    const [ax, az] = ROAD2[i], [bx, bz] = ROAD2[i + 1]; if (ax === 50 && bx === 62) continue;   // the ramp is already road
+    const len = Math.hypot(bx - ax, bz - az), ang = Math.atan2(bx - ax, bz - az), y = roadY((ax + bx) / 2, (az + bz) / 2);
+    const g = new THREE.PlaneGeometry(4, len + 4); g.rotateX(-Math.PI / 2); g.rotateY(ang);
+    const uv = g.attributes.uv; for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * 4 / 3, uv.getY(k) * (len + 4) / 3);
+    g.translate((ax + bx) / 2, y + i * .002, (az + bz) / 2); add(roadMat, g);
+    for (const s of [-1, 1]) { const e = new THREE.BoxGeometry(.18, .06, len + .5); e.rotateY(ang); const ox = Math.cos(ang) * 2.1 * s, oz = -Math.sin(ang) * 2.1 * s;
+      e.translate((ax + bx) / 2 + ox, y + .03, (az + bz) / 2 + oz); add(edge2Mat, e); }
+  }
   for (let i = 0; i < ROAD.length - 1; i++) {
     const [ax, az] = ROAD[i], [bx, bz] = ROAD[i + 1];
     if (az <= -28 && bz <= -28 && az > -40.5) continue;   // the ramp already is road
@@ -137,17 +156,18 @@ export function buildSanctuaryWorld(root){
       lightSpots.push({ x, y: y0 + 3, z, color: 0x8fdcff, power: 18, dist: 16 }); } }
 
   // ---- pines and rocks, never on the road or the build spots ----
-  const clear = (x, z, r) => roadDist(x, z) > r && PADS.every(([px, pz]) => Math.hypot(px - x, pz - z) > 4.5) && Math.hypot(x - DEER.x, z - DEER.z) > 12
-    && Math.hypot(x - PEDESTAL.x, z - PEDESTAL.z) > 6 && Math.hypot(x - WORKSHOP.x, z - WORKSHOP.z) > 7 && !(Math.abs(x) < 7 && z > -42 && z < -26);
+  const clear = (x, z, r) => roadDist(x, z) > r && roadDist(x, z, ROAD2) > r - 1 && PADS.every(([px, pz]) => Math.hypot(px - x, pz - z) > 4.5) && Math.hypot(x - DEER.x, z - DEER.z) > 12
+    && Math.hypot(x - PEDESTAL.x, z - PEDESTAL.z) > 6 && Math.hypot(x - WORKSHOP.x, z - WORKSHOP.z) > 7 && !(Math.abs(x) < 7 && z > -42 && z < -26)
+    && !(x > 47 && x < 57) && !(x > 62 && z > 50) && Math.hypot(x - 36, z - 61) > 9 && !(x > 48 && x < 64 && z < -46);
   let trees = 0;
-  for (let k = 0; k < 900 && trees < 120; k++) {
-    const x = rr(-47, 47), z = rr(-67, 67); if (!clear(x, z, 6.5)) continue; if (Math.abs(z + 40) < 2) continue;
+  for (let k = 0; k < 1600 && trees < 175; k++) {
+    const x = rr(-47, 97), z = rr(-67, 67); if (!clear(x, z, 6.5)) continue; if (Math.abs(z + 40) < 2 && x < 50) continue;
     const y0 = groundY(x, z), s = rr(.8, 1.5); trees++;
     const trunk = new THREE.CylinderGeometry(.18 * s, .26 * s, 1.4 * s, 6); trunk.translate(x, y0 + .7 * s, z); add(barkMat, trunk);
     for (let l = 0; l < 3; l++) { const c = new THREE.ConeGeometry((1.9 - l * .45) * s, (2.2 - l * .3) * s, 7); c.translate(x, y0 + (1.6 + l * 1.25) * s, z); add(l === 2 ? pineSnow : pineMat, c); }
     addCol(x - .35 * s, x + .35 * s, z - .35 * s, z + .35 * s, y0, y0 + 5 * s);
   }
-  for (let k = 0; k < 300; k++) { const x = rr(-47, 47), z = rr(-67, 67); if (!clear(x, z, 5)) continue; if (rand() < .7) continue;
+  for (let k = 0; k < 450; k++) { const x = rr(-47, 97), z = rr(-67, 67); if (!clear(x, z, 5)) continue; if (rand() < .7) continue;
     const y0 = groundY(x, z), s = rr(.5, 1.3), g = new THREE.DodecahedronGeometry(s, 0); g.scale(1.3, .8, 1); g.translate(x, y0 + s * .4, z); add(rockMat, g);
     addCol(x - s, x + s, z - s, z + s, y0, y0 + s); }
 
@@ -166,6 +186,27 @@ export function buildSanctuaryWorld(root){
     box(x - 2, x + 2, H, H + 1, z - 1.6, z - .6, woodMat); addCol(x - 2, x + 2, z - 1.6, z - .6, H, H + 1);
     box(x + .6, x + 1.4, H, H + .8, z + .6, z + 1.2, rockMat); }
   lightSpots.push({ x: DEER.x, y: H + 3, z: DEER.z, color: 0x9fdcff, power: 30, dist: 18 }, { x: PEDESTAL.x, y: H + 3, z: PEDESTAL.z, color: 0xb388ff, power: 20, dist: 12 }, { x: WORKSHOP.x, y: H + 2.5, z: WORKSHOP.z, color: 0xffb070, power: 20, dist: 12 });
+  // the deer shelter: a small barn on the terrace; the herd gathers next to it
+  { const x0 = 29, x1 = 37, z0 = -66, z1 = -60;
+    box(x0, x1, H, H + 3, z0, z1, woodMat, 3); addCol(x0, x1, z0, z1, H, H + 4); mm.solid.push([x0, x1, z0, z1]);
+    const rf = new THREE.ExtrudeGeometry(new THREE.Shape([new THREE.Vector2(-4.6, 0), new THREE.Vector2(4.6, 0), new THREE.Vector2(0, 2.4)]), { depth: 6.8, bevelEnabled: false });
+    rf.translate(33, H + 3, z0 - .4); add(pineSnow, rf);
+    box(31.8, 34.2, H, H + 2.2, z1, z1 + .05, barkMat, 2);   // the door
+    for (let i = 0; i < 6; i++) { const f = new THREE.BoxGeometry(.12, 1, .12); f.translate(38 + (i % 3) * 3, H + .5, -66 + Math.floor(i / 3) * 8); add(woodMat, f); }   // fence posts around the pen
+    lightSpots.push({ x: 33, y: H + 3.5, z: -57.5, color: 0xffd08a, power: 20, dist: 14 }); }
+  // the alien hive: a purple dome with spikes, a spitting spire and a glowing gate (the gate is its own mesh: it takes damage)
+  const hive = { x: HIVE.x, y: 0, z: HIVE.z, turret: { x: 88, y: 12, z: 60 }, gate: new THREE.Group() };
+  { const flesh = new THREE.MeshStandardMaterial({ color: 0x5a2d6a, roughness: .5, emissive: 0x3a0a4a, emissiveIntensity: .35, flatShading: true });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(12, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2), flesh); dome.scale.set(1, .75, .55); dome.position.set(78, 0, 64.5); root.add(dome);
+    for (let i = 0; i < 9; i++) { const a = i / 8 * Math.PI, s = new THREE.Mesh(new THREE.ConeGeometry(.7, 4 + (i % 3) * 1.5, 6), flesh); s.position.set(78 + Math.cos(a) * 10, 5 + Math.sin(a) * 2, 66 - Math.sin(a) * 2); s.rotation.z = -Math.cos(a) * .6; root.add(s); }
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(.5, 1.4, 11, 8), flesh); spire.position.set(88, 5.5, 60); root.add(spire);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(.8, 14, 10), new THREE.MeshBasicMaterial({ color: 0xff4fd8 })); eye.position.set(88, 12, 60); root.add(eye); hive.eye = eye;
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(4.2, .6, 8, 24, Math.PI), flesh); frame.position.set(0, 0, 0); hive.gate.add(frame);
+    hive.membrane = new THREE.MeshBasicMaterial({ color: 0xff4fd8, transparent: true, opacity: .55, side: THREE.DoubleSide });
+    const mem = new THREE.Mesh(new THREE.CircleGeometry(3.9, 24, 0, Math.PI), hive.membrane); hive.gate.add(mem);
+    hive.gate.position.set(HIVE.x, 0, HIVE.z); root.add(hive.gate);
+    addCol(66, 90, 58, 71, 0, 12); addCol(87, 89, 59, 61, 0, 12);
+    lightSpots.push({ x: 78, y: 4, z: 55, color: 0xff4fd8, power: 30, dist: 22 }); }
 
   // ---- merge ----
   for (const [mat, list] of geos) {
@@ -181,7 +222,7 @@ export function buildSanctuaryWorld(root){
     near.forEach(({ s }, i) => { const L = pool[i]; L.position.set(s.x, s.y, s.z); L.color.setHex(s.color); L.userData.power = s.power; L.distance = s.dist; });
   }
   const snowN = 1400, snowGeo = new THREE.BufferGeometry(), dp = new Float32Array(snowN * 3);
-  for (let i = 0; i < snowN; i++) { dp[i * 3] = rr(-50, 50); dp[i * 3 + 1] = rr(0, 22); dp[i * 3 + 2] = rr(-70, 70); }
+  for (let i = 0; i < snowN; i++) { dp[i * 3] = rr(-50, 100); dp[i * 3 + 1] = rr(0, 22); dp[i * 3 + 2] = rr(-70, 70); }
   snowGeo.setAttribute("position", new THREE.BufferAttribute(dp, 3));
   root.add(new THREE.Points(snowGeo, new THREE.PointsMaterial({ color: 0xf2f7ff, size: .09, transparent: true, opacity: .8, depthWrite: false })));
 
@@ -189,7 +230,8 @@ export function buildSanctuaryWorld(root){
   const at = (o, dy = 0) => ({ x: o.x, y: groundY(o.x, o.z) + dy, z: o.z });
   return {
     ...P, colliders, groundY, mm, bounds: BOUNDS, env, hill: H, roadDist,
-    road: ROAD.map(([x, z]) => ({ x, z, y: groundY(x, z) })),
+    road: ROAD.map(([x, z]) => ({ x, z, y: groundY(x, z) })), road2: ROAD2.map(([x, z]) => ({ x, z, y: groundY(x, z) })),
+    shelter: at(SHELTER), rally: at(RALLY), hive,
     pads: PADS, deer: at(DEER), pedestal: at(PEDESTAL), workshop: at(WORKSHOP),
     nests: [], route: [], zones: [{ ko: "사슴의 성소", en: "Deer sanctuary", x: 0, z: -55, pads: [], shop: [0, -50] }],
     entries: [[0, 66]], spawn: { x: 6, z: -52 }, gunSpot: new THREE.Vector3(6, 0, -52), tutorialSpawns: [],
