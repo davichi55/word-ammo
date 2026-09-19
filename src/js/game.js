@@ -464,8 +464,9 @@ $("#bpClose").onclick = () => closeBackpack(true);
 function lock(){ const c = renderer.domElement; if (document.pointerLockElement !== c && c.requestPointerLock) { const p = c.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } }
 document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === renderer.domElement;
-  // Esc while the mouse is captured releases it without a keydown: treat losing the lock as pause
-  if (!locked && G.running && !G.paused && !G.over && !G.backpackOpen && !G.noteOpen && G.wasLocked && !justClosed()) pauseGame();
+  if (locked && G.panel === "demon") { document.exitPointerLock(); return; }   // a late lock during a deer lesson: let it go again
+  // Esc while the mouse is captured releases it without a keydown: treat losing the lock as pause (not right after a deer lesson)
+  if (!locked && G.running && !G.paused && !G.over && !G.backpackOpen && !G.noteOpen && G.wasLocked && !justClosed() && performance.now() > (G.noPauseUntil || 0)) pauseGame();
   G.wasLocked = locked;
   $("#clickToPlay").hidden = locked || !G.running || G.paused || G.over || G.backpackOpen;
 });
@@ -1486,7 +1487,7 @@ function openDemon(o){
   const f = document.createElement("iframe"); f.id = "lessonFrame"; f.src = "demon-lesson.html"; document.body.appendChild(f); G.demon = { f, o, data: { type: "lesson", cards, play, newIdx: idx.get(o.w.id), lang: settings.lang } };
   f.addEventListener("load", () => { try { f.contentWindow.focus(); } catch (e) {} });
 }
-function closeDemon(){ if (G.demon) { G.demon.f.remove(); G.demon = null; } G.noteOpen = false; G.panel = null; G.timeScale = 1; G.panelClosedAt = performance.now(); $("#clickToPlay").hidden = false; }
+function closeDemon(){ if (G.demon) { G.demon.f.remove(); G.demon = null; } G.noPauseUntil = performance.now() + 2500; G.wasLocked = false; G.noteOpen = false; G.panel = null; G.timeScale = 1; G.panelClosedAt = performance.now(); $("#clickToPlay").hidden = false; }
 addEventListener("message", e => {
   const d = e.data; if (!d || d.from !== "demon-lesson" || !G.demon || e.source !== G.demon.f.contentWindow) return;
   if (d.type === "ready") { G.demon.f.contentWindow.postMessage(G.demon.data, "*"); try { G.demon.f.contentWindow.focus(); } catch (err) {} return; }
