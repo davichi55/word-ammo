@@ -809,7 +809,7 @@ function answerQuiz(idx){
   Q.lock = true; const ok = q.opts[idx] === q.ans;
   const btns = [...document.querySelectorAll("#noteBody [data-opt]")];
   btns[idx].classList.add(ok ? "right" : "wrong"); if (!ok) btns[q.opts.indexOf(q.ans)].classList.add("right");
-  if (ok) SFX.select(); else { SFX.resist(); Q.wrong++; }
+  if (ok) SFX.select(); else { SFX.resist(); Q.wrong++; (Q.missed || (Q.missed = [])).push(q); }
   mark(q.w, ok);
   if (q.audioAfter) say([wordClip(q.w.id)], { interrupt: true });
   $("#noteBody .qMsg").innerHTML = ok ? "✅ 맞아요! · Correct" : `❌ 정답: <b>${esc(q.ans)}</b>`;
@@ -818,9 +818,9 @@ function answerQuiz(idx){
     if (Q.i < Q.qs.length) { renderQuiz(); return; }
     if (Q.wrong === 0 && Q.onPass) { SFX.pickup(); const cb = Q.onPass; Q = null; cb(); return; }
     if (Q.wrong === 0) { SFX.pickup(); $("#noteBody").innerHTML = `<div class="qPass">🎉 통과! · Passed</div><div class="qMsg">${esc(G.note.w.kr)} = ${esc(meaning(G.note.w))}</div>`; setTimeout(closeNote, 1100); return; }
-    // not perfect: the whole quiz again, reshuffled, until a clean round
-    $("#noteBody").innerHTML = `<div class="qPass" style="color:#b8323f">다시! · Again</div><div class="qMsg">${Q.wrong} 틀렸어요 — 전부 맞힐 때까지 · ${Q.wrong} wrong, try until every answer is right</div>`;
-    setTimeout(() => { Q.round++; Q.i = 0; Q.wrong = 0; Q.qs.forEach(x => { if (!x.fixed) x.opts = shuffleA(x.opts); }); renderQuiz(); }, 1600);
+    // not perfect: only the questions you missed come back (reshuffled), until each one is right
+    $("#noteBody").innerHTML = `<div class="qPass" style="color:#b8323f">다시! · Again</div><div class="qMsg">${Q.wrong} 틀렸어요 — 틀린 문제만 다시 · only the ${Q.wrong} you missed</div>`;
+    setTimeout(() => { Q.round++; Q.qs = Q.missed; Q.missed = []; Q.i = 0; Q.wrong = 0; Q.qs.forEach(x => { if (!x.fixed) x.opts = shuffleA(x.opts); }); renderQuiz(); }, 1400);
   }, ok ? 650 : 1700);
 }
 $("#noteBody").addEventListener("click", e => { const b = e.target.closest("[data-opt]"); if (b) answerQuiz(+b.dataset.opt); });
