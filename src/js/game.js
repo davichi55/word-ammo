@@ -518,7 +518,7 @@ addEventListener("keydown", e => {
   if (G.paused) { if (k === "KeyQ") resumeGame(); return; }   // Q (or the button) resumes
   if (k === "Escape") { if (!G.paused && !e.repeat && !justClosed()) pauseGame(); return; }
   keys[k] = true;
-  if (k === "Space") { e.preventDefault(); dash(); }
+  if (k === "Space") { e.preventDefault(); if (G.mode !== "deer") dash(); }   // deer sanctuary: Space = sprint (held), no dash
   if (k === "KeyR") startReload();
   if (k === "KeyE" && G.mode === "deer" && G.interact) { deerUse(G.interact); return; }
   if (k === "KeyE" && G.mode === "fortress" && G.interact && G.interact.kind !== "revive" && !player.downed) { const it = G.interact; if (it.kind === "pad") towerQuiz(it.o); else if (it.kind === "tower") towerPicker(it.o); else if (it.kind === "event") useEvent(it.o); else openShop(); return; }
@@ -2352,7 +2352,7 @@ function renderMenu(){
   for (const id of ["#labelSel", "#bpSel", "#subsSel"]) $(id).closest("label").hidden = !CLASSIC;
   if (!CLASSIC) {
     $("[data-i=tagline]").innerHTML = "아기 얼음 사슴을 지키면서 단어를 배워요. 탑, 탄약, 함정, 사슴 군대 — 모두 퀴즈로 만들어요.<br><small>Protect the baby ice deer and learn words: towers, ammo, traps and a deer army — all built from quizzes.</small>";
-    $("[data-i=controls]").innerHTML = "<b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> dash · <b>E</b> use · <b>Tab</b> your words · <b>Enter</b> chat (co-op) · <b>Esc</b> pause · <b>F11</b> fullscreen";
+    $("[data-i=controls]").innerHTML = "<b>WASD</b> move · <b>Shift</b> sprint · <b>Space / Shift</b> sprint (hold) · <b>E</b> use · <b>Tab</b> your words · <b>Enter</b> chat (co-op) · <b>Esc</b> pause · <b>F11</b> fullscreen";
   }
   const done = store.get("wa_tutorial_done", false), best = store.get("wa_best", 0);
   $("#playBtn").textContent = done ? `▶ 시작 · Play${best ? "  (best ★" + best + ")" : ""}` : "▶ 시작 · Play (starts with the tutorial)";
@@ -2395,8 +2395,8 @@ function update(rdt){
     const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw)), r = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
     const want = new THREE.Vector3();
     if (keys.KeyW) want.add(f); if (keys.KeyS) want.sub(f); if (keys.KeyD) want.add(r); if (keys.KeyA) want.sub(r);
-    const sprint = keys.ShiftLeft || keys.ShiftRight;
-    if (want.lengthSq() > 0) want.normalize().multiplyScalar(sprint ? 9.5 : 6.2);
+    const deerRun = G.mode === "deer" && (keys.Space || keys.ShiftLeft || keys.ShiftRight), sprint = keys.ShiftLeft || keys.ShiftRight;
+    if (want.lengthSq() > 0) want.normalize().multiplyScalar(deerRun ? 12.5 : sprint ? 9.5 : 6.2);   // you can't get hurt here: no reason to cap running
     player.vel.x += (want.x - player.vel.x) * Math.min(1, rdt * 10); player.vel.z += (want.z - player.vel.z) * Math.min(1, rdt * 10);
     if (player.dashing > 0) { player.dashing -= rdt; player.vel.copy(player.dashDir).multiplyScalar(19); if (player.dashing <= 0) { player.dashing = 0; player.vel.multiplyScalar(.3); } }   // exactly 0: "dashing" is checked as truthy elsewhere
     const before = player.pos.clone();
