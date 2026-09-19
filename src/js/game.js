@@ -776,9 +776,18 @@ function openNote(){
 let Q = null;
 const POS_LIST = ["명사", "동사", "형용사", "부사", "표현"];
 const shuffleA = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// content words of a word's English meaning ("by nature, so much" → nature, much) — to keep look-alike options apart
+const GLOSS_STOP = new Set("the and for with from into onto one someone something sth very not out off get make have take give about more most than that this what when".split(" "));
+const glossWords = x => new Set(((x && x.m && x.m.en) || "").toLowerCase().replace(/\([^)]*\)/g, " ").split(/[^a-z]+/).filter(t => t.length > 2 && !GLOSS_STOP.has(t)));
 function distinct(list, n, key, avoid){
-  const out = [], seen = new Set(avoid.map(key));
-  for (const x of shuffleA(list)) { const k = key(x); if (!k || seen.has(k)) continue; seen.add(k); out.push(x); if (out.length >= n) break; }
+  const out = [], seen = new Set(avoid.map(key)), taken = avoid.map(glossWords);
+  const overlaps = g => taken.some(t => [...g].some(v => t.has(v)));
+  // first pass: skip options whose meaning shares a word with the answer or another option (원래 "originally, by nature" vs 워낙 "by nature, so much")
+  for (const strict of [true, false]) {
+    for (const x of shuffleA(list)) { if (out.length >= n) break; const k = key(x); if (!k || seen.has(k)) continue;
+      const g = glossWords(x); if (strict && overlaps(g)) continue; seen.add(k); taken.push(g); out.push(x); }
+    if (out.length >= n) break;
+  }
   return out;
 }
 function buildQuiz(){
