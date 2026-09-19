@@ -393,7 +393,7 @@ function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
 function openBackpack(){
   if ((!player.hasGun && G.mode !== "deer") || G.over) return;   // the sanctuary has no gun, but you can still look at your words
   G.backpackOpen = true; G.timeScale = G.mode === "deer" ? .3 : .15; SFX.open();
-  $("#bpFoot").innerHTML = G.mode === "deer" ? "🎒 지금까지 배운 단어 · every word you know (🦌 = taught by the deer) · click a word to hear it · Tab = close" : "Tab 닫기 · 클릭해서 장전 · ←/→ 탭";
+  $("#bpFoot").innerHTML = G.mode === "deer" ? "🎒 지금까지 배운 단어 · every word you know (🦌 = taught by the deer) · click a word to hear it · Tab / Q = close" : "Tab 닫기 · 클릭해서 장전 · ←/→ 탭";
   $("#backpack").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow"); $("#clickToPlay").hidden = true; $("#bpGrid").scrollTop = 0;
   // start on the tab of the current loaded word, or keep the last tab
   renderBackpack();
@@ -487,15 +487,16 @@ addEventListener("keydown", e => {
   if (k === "Enter" && G.coop && !G.noteOpen && !G.backpackOpen) { e.preventDefault(); openChat(); return; }   // 💬 co-op chat
   // after Esc closed a panel the mouse is free: any other key (a real user gesture, unlike Esc) captures it again
   if (!G.noteOpen && !G.backpackOpen && !G.paused && k !== "Escape" && document.pointerLockElement !== renderer.domElement) { initAudio(); lock(); }
+  const shut = k === "Escape" || k === "KeyQ";   // Q closes everything too — unlike Esc it keeps the mouse captured
   if (G.noteOpen) { e.preventDefault();
-    if (G.panel === "picker") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n && G.unlocked[+n[1] - 1]) { pickWordFor(G.pickerTower, G.unlocked[+n[1] - 1]); closePanel(); } if (k === "Escape" || k === "KeyE") closePanel(); return; }
-    if (G.panel === "shop") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n) buy(+n[1] - 1); if (k === "Escape" || k === "KeyE") closePanel(); return; }
-    if (G.panel === "brief") { if (k === "KeyE" || k === "Space" || k === "Enter" || k === "Escape") closeBrief();
+    if (G.panel === "picker") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n && G.unlocked[+n[1] - 1]) { pickWordFor(G.pickerTower, G.unlocked[+n[1] - 1]); closePanel(); } if (shut || k === "KeyE") closePanel(); return; }
+    if (G.panel === "shop") { const n = /^(?:Digit|Numpad)([1-9])$/.exec(k); if (n) buy(+n[1] - 1); if (shut || k === "KeyE") closePanel(); return; }
+    if (G.panel === "brief") { if (k === "KeyE" || k === "Space" || k === "Enter" || shut) closeBrief();
       const n = /^(?:Digit|Numpad)([1-4])$/.exec(k); if (n && G.waveWords[+n[1] - 1]) say([wordClip(G.waveWords[+n[1] - 1].id)], { interrupt: true }); return; }
     if (G.panel === "demon") { if (k === "KeyQ" || k === "Escape") { closeDemon(); objectiveFlash("🦌 수업을 그만뒀어요 · Lesson stopped"); } return; }
-    if (G.panel === "pedestal" || G.panel === "workshop") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct(G.panel === "pedestal" ? "ammo" : "trap"); else if (k === "Escape") closePanel(); return; }
-    if (G.panel === "shelter") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct("train"); else if (k === "Digit2" || k === "Numpad2") deerAct("charge"); else if (k === "Escape") closePanel(); return; }
-    if (G.panel === "lessons") { const n = /^(?:Digit|Numpad)([1-6])$/.exec(k); if (n) deerAct("lesson" + (+n[1] - 1)); else if (k === "Escape" || k === "KeyE") closePanel(); return; }
+    if (G.panel === "pedestal" || G.panel === "workshop") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct(G.panel === "pedestal" ? "ammo" : "trap"); else if (shut) closePanel(); return; }
+    if (G.panel === "shelter") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct("train"); else if (shut) closePanel(); return; }
+    if (G.panel === "lessons") { const n = /^(?:Digit|Numpad)([1-6])$/.exec(k); if (n) deerAct("lesson" + (+n[1] - 1)); else if (shut || k === "KeyE") closePanel(); return; }
     if (G.panel === "lessoncard") { if (k === "KeyE" || k === "Space" || k === "Enter") lessonQuiz(); else if (k === "Escape" || k === "KeyQ") closePanel(); return; }
     // any build / repair / safe quiz can be left (Esc, Q or the Exit button) — only a hound bite can't
     if (Q && Q.onPass && G.panel !== "bite" && (k === "Escape" || k === "KeyQ")) { closePanel(); return; }
@@ -504,13 +505,14 @@ addEventListener("keydown", e => {
   if (k === "Tab" || k === "KeyB") { e.preventDefault(); if (G.backpackOpen) closeBackpack(true); else if (!G.paused) openBackpack(); return; }
   if (G.backpackOpen) {
     const cats = bpTabsList();
-    if (!cats.length && k !== "Escape") return;
-    if (k === "Escape") { closeBackpack(true); return; }
+    if (shut) { closeBackpack(true); return; }
+    if (!cats.length) return;
     if (k === "ArrowRight") { G.bpTab = (G.bpTab + 1) % cats.length; renderBackpack(); SFX.select(); }
     if (k === "ArrowLeft") { G.bpTab = (G.bpTab - 1 + cats.length) % cats.length; renderBackpack(); SFX.select(); }
     const d = /^Digit(\d)$/.exec(k); if (d) { const i = (+d[1] + 9) % 10; if (i < cats.length) { G.bpTab = i; renderBackpack(); SFX.select(); } }
     return;
   }
+  if (G.paused) { if (k === "KeyQ") resumeGame(); return; }   // Q (or the button) resumes
   if (k === "Escape") { if (!G.paused && !e.repeat && !justClosed()) pauseGame(); return; }
   keys[k] = true;
   if (k === "Space") { e.preventDefault(); dash(); }
@@ -1052,7 +1054,7 @@ function nearestInteract(){
 const CLOSABLE = new Set(["picker", "shop", "pedestal", "workshop", "lessons", "shelter"]), EXITABLE = new Set(["towerquiz", "ammoq", "trapq", "buildq", "lessonq", "trainq"]);
 function openPanel(kind, head){
   G.noteOpen = true; G.panel = kind; G.timeScale = G.mode === "deer" ? .3 : .15; document.exitPointerLock && document.exitPointerLock();
-  $("#note .nHead").textContent = head; $("#noteClose").hidden = !CLOSABLE.has(kind) && !EXITABLE.has(kind); $("#noteClose").textContent = EXITABLE.has(kind) ? "나가기 · Exit (Esc / Q)" : "닫기 · Close (Esc)";
+  $("#note .nHead").textContent = head; $("#noteClose").hidden = !CLOSABLE.has(kind) && !EXITABLE.has(kind); $("#noteClose").textContent = EXITABLE.has(kind) ? "나가기 · Exit (Q)" : "닫기 · Close (Q)";
   $("#note").hidden = false; if (!liveCoop()) $("#vignette").classList.add("slow");
 }
 function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = null; G.panelClosedAt = performance.now(); $("#note").hidden = true; $("#vignette").classList.remove("slow"); lock();
@@ -2199,7 +2201,7 @@ $("#deerBtn").onclick = solo(() => startGame(false, "deer"));
 const UI = {
   tagline: "외계인마다 약한 단어가 하나 있어요. 루미의 말을 듣고, 가방에서 그 단어를 찾아 장전하고, 쏘세요.<br><small>Every alien is weak to one Korean word. Listen to Lumi, find the word in your backpack, load it, fire.</small>",
   tutorial: "🎓 튜토리얼 · Tutorial", lang: "Meaning language", labels: "Backpack labels", hints: "Lumi shows the word", sens: "Mouse sensitivity", volume: "Volume",
-  chapters: "Chapters", classes: "Classes", star: "Priority words only", resume: "▶ Resume", quit: "Quit run", over: "Game over", review: "Words to review",
+  chapters: "Chapters", classes: "Classes", star: "Priority words only", resume: "▶ Resume (Q)", quit: "Quit run", over: "Game over", review: "Words to review",
   again: "↻ Again", menu: "Menu", click: "Click or press any key to play",
   controls: "<b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> dash · <b>Mouse</b> aim/shoot · <b>Tab</b> backpack (time slows) · <b>1–4</b> recent ammo · <b>R</b> reload · <b>Q</b> hear the word again · <b>Esc</b> pause · <b>F11</b> fullscreen",
 };
