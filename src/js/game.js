@@ -511,7 +511,7 @@ addEventListener("keydown", e => {
   if (k === "KeyE" && G.mode === "heist" && G.interact) { heistUse(G.interact); return; }
   if (k === "KeyE" && G.mode === "fortress" && G.interact && G.interact.kind !== "revive" && !player.downed) { const it = G.interact; if (it.kind === "pad") towerQuiz(it.o); else if (it.kind === "tower") towerPicker(it.o); else if (it.kind === "event") useEvent(it.o); else openShop(); return; }
   if (k === "KeyF") nukeWord();
-  if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a && a.disguised) objectiveFlash("🥷 변장한 외계인은 힌트 없어요 · No hints for a disguised alien — recall it!"); else if (a) announce(a, true); }
+  if (k === "KeyQ") { const h = aimAlien(); const a = h ? h.alien : nearestAlien(); if (a && a.disguised) objectiveFlash("🎭 변장한 외계인은 힌트 없어요 · No hints for a disguised alien — recall it!"); else if (a) announce(a, true); }
   if (shirtMode()) { const n = /^Digit([1-9])$/.exec(k); if (n) { const w = ammoWords()[+n[1] - 1]; if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); } if (n) return; }
   const d = /^Digit([1-4])$/.exec(k);
   if (d && G.recentLoads && G.recentLoads[+d[1] - 1]) { const w = D.words.find(x => x.id === G.recentLoads[+d[1] - 1]); if (w && (!G.loaded || w.id !== G.loaded.id)) loadWord(w); }
@@ -1246,7 +1246,7 @@ function victory(){
 // The loot IS your money: aliens that reach it steal coins, upgrades are paid from it, and an alien hitting an
 // empty pile ends the run. Every wave brings 4 NEW words, and the game makes you use them:
 //   📻 every tower goes offline at a new wave until you tune it with a question about ITS new word,
-//   🥷 disguised aliens wear the MEANING — towers can't read it, only your gun with the right Korean word works,
+//   🎭 disguised aliens wear the MEANING — towers can't read it, only your gun with the right Korean word works,
 //   👑 the boss has 4 locks, one per new word (its meaning, or only its sound): shoot each with that word.
 // Other quizzes (3 q) ask about every word you've learned: 🔨 build · 💥 repair · 🔐 safe → money.
 const START_LOOT = 300;
@@ -1273,10 +1273,11 @@ function heistWave(){
 }
 function openBrief(words){
   Q = null; openPanel("brief", `🏦 Wave ${G.wave} — 새 단어 · ${words.length} new words`); G.timeScale = 0;
-  $("#noteBody").innerHTML = `<div class="brief">${words.map((w, i) => `<div class="bRow"><span class="k">${i + 1}</span><b>${esc(w.kr)}</b><button data-say="${w.id}">🔊</button><span class="m">${esc(meaning(w))}</span><small>${POS_KO[w.pos] || ""} · ${CAT[w.cat].icon}</small></div>`).join("")}</div>
+  // two lines per word (Korean + 🔊 + type, then the meaning) so long expressions still fit
+  $("#noteBody").innerHTML = `<div class="brief">${words.map((w, i) => `<div class="bRow"><span class="k">${i + 1}</span><div class="bKr"><b class="${w.kr.length > 9 ? "long" : ""}">${esc(w.kr)}</b><button data-say="${w.id}">🔊</button></div><small>${POS_KO[w.pos] || ""} · ${CAT[w.cat].icon}</small><span class="m">${esc(meaning(w))}</span></div>`).join("")}</div>
     <div class="nHint">잘 외우세요! 이 단어들이 이번 웨이브의 탄창이에요 (키 1–4). · Learn these — they're this wave's ammo (keys 1–4).<br>
     📻 탑은 새 단어 문제로 켜져요 · Towers are offline until you tune them with a question about their new word.<br>
-    🥷 뜻을 입은 외계인은 탑이 못 쏴요 · Aliens wearing the <b>meaning</b>: only your gun, loaded with the right Korean word.<br>
+    🎭 뜻을 입은 외계인은 탑이 못 쏴요 · Aliens wearing the <b>meaning</b>: only your gun, loaded with the right Korean word.<br>
     👑 보스의 자물쇠 4개 = 새 단어 4개 · The boss has 4 locks — one per new word.</div>`;
   $("#noteClose").hidden = false; $("#noteClose").textContent = "시작 · Start (E)";
   say(words.map(w => wordClip(w.id)));
@@ -1989,4 +1990,4 @@ function frame(){
 drawGunScreen();
 requestAnimationFrame(frame);
 window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
-window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, spawnHeistBoss, bossLockHit, htowerKey, heist: () => G.heist, heistWave, heistUse, heistInteract, spawnSafe, crackSafe, breakTower, repairTower, heistTarget, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
+window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, spawnHeistBoss, bossLockHit, htowerKey, openBrief, heist: () => G.heist, heistWave, heistUse, heistInteract, spawnSafe, crackSafe, breakTower, repairTower, heistTarget, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };

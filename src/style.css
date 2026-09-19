@@ -162,7 +162,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 
 /* ---------------- the note (escape mode) ---------------- */
 #note{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(10,6,2,.55);backdrop-filter:blur(3px);z-index:10}
-#note .paper{width:min(560px,92vw);background:linear-gradient(170deg,#f8ecd0,#e9d4a6);color:#2a1d0c;border-radius:10px;padding:26px 30px;box-shadow:0 20px 60px rgba(0,0,0,.6),inset 0 0 40px rgba(120,80,20,.25);transform:rotate(-1deg)}
+#note .paper{width:min(560px,92vw);max-height:94vh;overflow-y:auto;background:linear-gradient(170deg,#f8ecd0,#e9d4a6);color:#2a1d0c;border-radius:10px;padding:26px 30px;box-shadow:0 20px 60px rgba(0,0,0,.6),inset 0 0 40px rgba(120,80,20,.25);transform:rotate(-1deg)}
 #note .nHead{font-size:14px;letter-spacing:2px;color:#8a5a1a;margin-bottom:8px}
 #note .nKr{font-size:52px;font-weight:900;line-height:1.1}
 #note .nKr button{font-size:22px;vertical-align:middle;background:none;border:1px solid #b08a4a;border-radius:10px;cursor:pointer;padding:2px 8px}
@@ -208,9 +208,11 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 /* 🏦 heist */
 .btn.heist{font-size:20px;background:linear-gradient(180deg,#ffcf5c,#3f8a3a);border-color:#fff0b8;color:#0d1a05;font-weight:800}
 #note .brief{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
-#note .brief .bRow{display:flex;align-items:center;gap:10px;background:#fff8e6;border:2px solid #b08a4a;border-radius:10px;padding:8px 12px}
-#note .brief .bRow b{font-size:30px;font-weight:900;white-space:nowrap}
-#note .brief .bRow .m{flex:1;font-size:18px;color:#5a2d0a}
-#note .brief .bRow small{color:#6a4a20;white-space:nowrap}
+#note .brief .bRow{display:grid;grid-template-columns:auto 1fr auto;column-gap:10px;row-gap:2px;align-items:center;background:#fff8e6;border:2px solid #b08a4a;border-radius:10px;padding:8px 12px}
+#note .brief .bKr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+#note .brief .bRow b{font-size:30px;font-weight:900;line-height:1.15;overflow-wrap:anywhere}
+#note .brief .bRow b.long{font-size:22px}
+#note .brief .bRow .m{grid-column:2/4;font-size:17px;color:#5a2d0a;line-height:1.25}
+#note .brief .bRow small{color:#6a4a20;white-space:nowrap;align-self:start;margin-top:6px}
 #note .brief .bRow button{font-size:18px;background:none;border:1px solid #b08a4a;border-radius:8px;cursor:pointer;padding:2px 8px}
-#note .brief .bRow .k{display:inline-block;width:24px;height:24px;border-radius:6px;background:#2a1d0c;color:#f8ecd0;font-size:14px;text-align:center;line-height:24px}
+#note .brief .bRow .k{display:inline-block;width:24px;height:24px;border-radius:6px;background:#2a1d0c;color:#f8ecd0;font-size:14px;text-align:center;line-height:24px;align-self:start;margin-top:6px}
