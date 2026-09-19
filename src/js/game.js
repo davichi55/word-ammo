@@ -44,7 +44,7 @@ renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(innerWid
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.55;
 $("#game").appendChild(renderer.domElement);
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, .05, 900);
+const camera = new THREE.PerspectiveCamera(72, (innerWidth / innerHeight) || 16 / 9, .05, 900);
 scene.add(camera);
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -476,6 +476,7 @@ renderer.domElement.addEventListener("mousedown", e => {
   if (!G.running || G.paused || G.over) return;
   if (document.pointerLockElement !== renderer.domElement) { lock(); return; }
   if (G.duel) { if (e.button === 0) duelFire(); return; }   // 👑 the boss duel: shoot an answer
+  if (G.aiming) { if (e.button === 0) confirmAim(); return; }   // 🎯 aiming a catapult
   if (e.button === 0) { G.firing = true; fire(); }
 });
 addEventListener("mouseup", e => { if (e.button === 0) G.firing = false; });
@@ -488,6 +489,7 @@ addEventListener("keydown", e => {
   if (!G.running || G.over || G.chatting) return;
   const k = e.code;
   if (k === "Enter" && G.coop && !G.noteOpen && !G.backpackOpen) { e.preventDefault(); openChat(); return; }   // 💬 co-op chat
+  if (G.aiming && !G.noteOpen) { if (k === "KeyE" || k === "Digit1") { confirmAim(); return; } if (k === "Digit2") { aimPickup(); return; } if (k === "KeyQ" || k === "Escape") { G.aiming = null; return; } }
   // after Esc closed a panel the mouse is free: any other key (a real user gesture, unlike Esc) captures it again
   if (!G.noteOpen && !G.backpackOpen && !G.paused && k !== "Escape" && document.pointerLockElement !== renderer.domElement) { initAudio(); lock(); }
   const shut = k === "Escape" || k === "KeyQ";   // Q closes everything too — unlike Esc it keeps the mouse captured
@@ -497,7 +499,7 @@ addEventListener("keydown", e => {
     if (G.panel === "brief") { if (k === "KeyE" || k === "Space" || k === "Enter" || shut) closeBrief();
       const n = /^(?:Digit|Numpad)([1-4])$/.exec(k); if (n && G.waveWords[+n[1] - 1]) say([wordClip(G.waveWords[+n[1] - 1].id)], { interrupt: true }); return; }
     if (G.panel === "demon") { if (k === "KeyQ" || k === "Escape") { closeDemon(); objectiveFlash("🦌 수업을 그만뒀어요 · Lesson stopped"); } return; }
-    if (G.panel === "pedestal" || G.panel === "workshop") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct(G.panel === "pedestal" ? "ammo" : "trap"); else if (shut) closePanel(); return; }
+    if (G.panel === "pedestal" || G.panel === "workshop") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct(G.panel === "pedestal" ? "ammo" : "trap"); else if (G.panel === "workshop" && (k === "Digit2" || k === "Numpad2")) deerAct("cat"); else if (shut) closePanel(); return; }
     if (G.panel === "shelter") { if (k === "Digit1" || k === "Numpad1" || k === "KeyE") deerAct("train"); else if (shut) closePanel(); return; }
     if (G.panel === "lessons") { const n = /^(?:Digit|Numpad)([1-6])$/.exec(k); if (n) deerAct("lesson" + (+n[1] - 1)); else if (shut || k === "KeyE") closePanel(); return; }
     if (G.panel === "lessoncard") { if (k === "KeyE" || k === "Space" || k === "Enter") lessonQuiz(); else if (k === "Escape" || k === "KeyQ") closePanel(); return; }
@@ -1054,7 +1056,7 @@ function nearestInteract(){
   return null;
 }
 // ---- panels on the paper (#note): tower quiz, tower word picker, shop. The world slows, it doesn't stop. ----
-const CLOSABLE = new Set(["picker", "shop", "pedestal", "workshop", "lessons", "shelter"]), EXITABLE = new Set(["towerquiz", "ammoq", "trapq", "buildq", "lessonq", "trainq"]);
+const CLOSABLE = new Set(["picker", "shop", "pedestal", "workshop", "lessons", "shelter"]), EXITABLE = new Set(["towerquiz", "ammoq", "trapq", "buildq", "lessonq", "trainq", "catq"]);
 function openPanel(kind, head){
   G.noteOpen = true; G.panel = kind; G.timeScale = G.mode === "deer" ? .3 : .15; document.exitPointerLock && document.exitPointerLock();
   $("#note .nHead").textContent = head; $("#noteClose").hidden = !CLOSABLE.has(kind) && !EXITABLE.has(kind); $("#noteClose").textContent = EXITABLE.has(kind) ? "나가기 · Exit (Q)" : "닫기 · Close (Q)";
@@ -1320,7 +1322,7 @@ function deerStart(client = false){   // client = the co-op partner: same scene,
   S.signs = [tag("🦌 E", "수업 · lessons", W.deer.x, W.deer.y + 4.6, W.deer.z), tag("💎 E", "탄약 · ammo", W.pedestal.x, W.pedestal.y + 3.6, W.pedestal.z), tag("🔧 E", "함정 · traps", W.workshop.x, W.workshop.y + 5.2, W.workshop.z), tag("🦌 E", "목장 · shelter", W.shelter.x, W.shelter.y + 6.4, W.shelter.z - 4)];
   // the attack lane: a herd that gathers at the shelter, and the hive's gate
   const gate = Math.max(8, Math.round(40 * armyScale()));
-  Object.assign(S, { herd: [], runners: [], gateHp: gate, gateMax: gate, turretCd: 0, hiveBroken: false });
+  Object.assign(S, { herd: [], runners: [], gateHp: gate, gateMax: gate, turretCd: 0, hiveBroken: false, cats: [], catKits: 0, boulders: [] });
   W.hive.membrane.opacity = .55; W.hive.gate.rotation.x = 0; W.hive.gate.position.y = 0;
   S.gateSign = tag(`🚪 ${gate}/${gate}`, "외계인 둥지 · hive gate", W.hive.x, 9.5, W.hive.z - .5, 1.8); S.signs.push(S.gateSign);
   // a pink pillar over the hive: the goal, visible from the sanctuary
@@ -1412,8 +1414,9 @@ function openWorkshop(){ openPanel("workshop", "🔧 작업장 · Workshop"); re
 function renderWorkshop(){
   const S = G.sanct, full = S.traps.length + S.kits >= trapSlots();
   $("#noteBody").innerHTML = `<div class="qHead">🪤 ${S.traps.length}/${trapSlots()} on the road${S.kits ? ` · 📦 ${S.kits} to place` : ""} · Lv ${trapLv() + 1}${has("frost") ? " · ❄️ freezes" : ""}</div>
-    <div class="dList"><div>함정은 밟은 외계인을 없애요 · a trap kills any alien that steps on it (💎 ${trapCost()} ammo), then re-arms in ${trapRearm()} s</div></div>
-    <div class="shop" style="margin-top:10px"><button data-act="trap" ${full ? "disabled" : ""}><span class="k">1</span><b>함정 만들기 · Build a trap</b> <small>8 questions on this wave's 4 new words</small><span class="c">${full ? "FULL" : "🪤 +1"}</span></button></div>`;
+    <div class="dList"><div>🪤 −${trapHit()} to every alien on it (💎 ${trapCost()}), re-arms in ${trapRearm()} s · 🎯 catapults: ${S.cats.length}${S.catKits ? ` · 📦 ${S.catKits} to place` : ""} — splash −${Math.round(catDmg())}, free to fire</div></div>
+    <div class="shop" style="margin-top:10px"><button data-act="trap" ${full ? "disabled" : ""}><span class="k">1</span><b>함정 만들기 · Build a trap</b> <small>8 questions on this wave's 4 new words</small><span class="c">${full ? "FULL" : "🪤 +1"}</span></button>
+    <button data-act="cat"><span class="k">2</span><b>투석기 · Catapult</b> <small>5 questions · place it off the road, aim at the road</small><span class="c">🎯 +1</span></button></div>`;
 }
 function trapQuiz(){
   const S = G.sanct; if (S.traps.length + S.kits >= trapSlots()) return;
@@ -1455,7 +1458,7 @@ function trapsTick(dt){
     burst(new THREE.Vector3(t.x, t.y + .6, t.z), 0xff9a3a, 40, 7); fxOut({ b: [t.x, t.y + .6, t.z, 0xff9a3a] });
     for (const a of victims) {
       if (a.special) { const dmg = SANCT.trapDmg[trapLv()]; floater(a.aimPoint(), `👑 −${dmg}`, "#ff9a3a", 32, 1.2); a.stagger = .5; if (a.damage(dmg)) onKill(a, true); }
-      else { a.damage(9999); onKill(a, true); }
+      else { const dmg = trapHit(); floater(a.aimPoint(), `-${dmg}`, "#ff9a3a", 24, .8); a.stagger = .4; if (a.damage(dmg)) onKill(a, true); }   // no more one-hit kills
     }
     if (has("frost")) { for (const a of G.aliens) if (!a.dead && Math.hypot(a.pos.x - t.x, a.pos.z - t.z) < 5) a.frozenUntil = G.time + 3; burst(new THREE.Vector3(t.x, t.y + .4, t.z), 0x9fdcff, 40, 8); }
   }
@@ -1678,6 +1681,7 @@ function checkDuelEnd(){
 function deerInteract(){
   const S = G.sanct, W = world, near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
   for (const t of S.traps) if (near(t, 1.8)) return { kind: "pickup", o: t, label: "E · 🪤 함정 들기 · pick up this trap (to move it)" };
+  for (const c of S.cats) if (near(c, 2.4)) return { kind: "cataim", o: c, label: "E · 🎯 투석기 조준 · aim this catapult (then 2 = pick up)" };
   if (S.kits && W.roadDist(player.pos.x, player.pos.z) < 2.6 && !S.traps.some(t => Math.hypot(t.x - player.pos.x, t.z - player.pos.z) < 3.2))
     return { kind: "place", label: `E · 🪤 여기에 함정 놓기 · place a trap here (📦 ${S.kits})` };
   for (const p of fort.pads) if (near(p, 2.2)) return { kind: "build", o: p, label: "E · 🔨 탑 짓기 — 문제 2개 · build a tower (2 questions)" };
@@ -1686,7 +1690,94 @@ function deerInteract(){
   if (near(W.shelter, 3.8)) return { kind: "shelter", label: `E · 🦌 사슴 목장 · deer shelter — herd ${S.herd.length}, hive gate ❤ ${S.gateHp}` };
   if (near(W.deer, 4.5)) return { kind: "lessons", label: "E · 🦌 사슴의 수업 · learn from the deer" };
   for (const t of fort.towers) if (near(t, 2.6)) return { kind: "none", label: `🗼 Lv ${towerLv() + 1} · ${t.kills || 0} kills · 💎 ${S.ammo} shared ammo` };
+  if (S.catKits && W.roadDist(player.pos.x, player.pos.z) > 3 && !S.cats.some(c => Math.hypot(c.x - player.pos.x, c.z - player.pos.z) < 3))
+    return { kind: "catplace", label: `E · 🎯 투석기 놓기 · place a catapult here (📦 ${S.catKits})` };
   return null;
+}
+// ---- 🎯 catapults: 5 questions each, placed off the road, aimed at a spot on it; free splash shots (¼ of a tower) ----
+const CATA = { quiz: 5, range: 45, radius: 3.5, cd: 1.5, flight: .9 };
+const catDmg = () => SANCT.towerDmg[towerLv()] * .25;
+const trapHit = () => Math.round(alienHp(G.wave) * .6);   // a trap takes ~60 % of an alien: 2 hits (or a tower's help)
+function catQuiz(){
+  const qs = [], used = new Set();
+  for (let i = 0; i < CATA.quiz; i++) { let w = pickQuizWord(); for (let k = 0; k < 5 && used.has(w.id); k++) w = pickQuizWord(); used.add(w.id); qs.push(knownQuestion(w)); }
+  deerQuiz("catq", "🎯 투석기 · Catapult (5)", qs, () => {
+    if (isClient()) coopAct({ a: "catkit" }); else G.sanct.catKits++;
+    SFX.pickup(); objectiveFlash("🎯 투석기 완성! · Catapult ready — stand OFF the road and press <b>E</b> to place it, then aim at the road"); openWorkshop(); });
+}
+function makeCatapult(x, z, tx, tz){
+  const y = world.groundY(x, z), g = new THREE.Group(), wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: .85 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.6, .35, 2.2), wood); base.position.y = .35; g.add(base);
+  for (const s of [-1, 1]) { const u = new THREE.Mesh(new THREE.BoxGeometry(.18, 1.4, .18), wood); u.position.set(s * .6, 1.1, 0); g.add(u); }
+  for (const [wx, wz] of [[-.8, .8], [.8, .8], [-.8, -.8], [.8, -.8]]) { const wh = new THREE.Mesh(new THREE.CylinderGeometry(.3, .3, .15, 12), wood); wh.rotation.z = Math.PI / 2; wh.position.set(wx, .3, wz); g.add(wh); }
+  const pivot = new THREE.Group(); pivot.position.y = 1.7; g.add(pivot);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(.14, .14, 2.8), wood); arm.position.z = -.5; pivot.add(arm);
+  const cup = new THREE.Mesh(new THREE.SphereGeometry(.3, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), wood); cup.rotation.x = Math.PI; cup.position.set(0, .15, -1.8); pivot.add(cup);
+  const wt = new THREE.Mesh(new THREE.BoxGeometry(.5, .5, .5), new THREE.MeshStandardMaterial({ color: 0x555a66, metalness: .6 })); wt.position.set(0, -.3, .85); pivot.add(wt);
+  g.position.set(x, y, z); scene.add(g);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(CATA.radius - .3, CATA.radius, 36), new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .35, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; scene.add(ring);
+  const c = { g, pivot, ring, x, y, z, tx, tz, ty: 0, cd: Math.random() * CATA.cd, swing: 0 }; aimCatapult(c, tx, tz); return c;
+}
+function aimCatapult(c, tx, tz){ c.tx = tx; c.tz = tz; c.ty = world.groundY(tx, tz); c.g.rotation.y = Math.atan2(c.x - tx, c.z - tz); c.ring.position.set(tx, c.ty + .06, tz); }
+function removeCatapult(c){ scene.remove(c.g); scene.remove(c.ring); }
+function launchBoulder(fx, fy, fz, tx, ty, tz, dmg){
+  const m = new THREE.Mesh(new THREE.DodecahedronGeometry(.35, 0), new THREE.MeshStandardMaterial({ color: 0x8a8f9a, roughness: .9, flatShading: true }));
+  m.position.set(fx, fy, fz); scene.add(m); G.sanct.boulders.push({ m, fx, fy, fz, tx, ty, tz, t: 0, dmg });
+}
+function catapultsTick(dt){   // host: fire at the spot whenever an alien is there
+  const S = G.sanct;
+  for (const c of S.cats) {
+    c.cd -= dt;
+    if (c.cd > 0) continue;
+    if (!G.aliens.some(a => !a.dead && a.spawnT >= 1 && Math.hypot(a.pos.x - c.tx, a.pos.z - c.tz) < CATA.radius + 1)) { c.cd = .25; continue; }
+    c.cd = CATA.cd; c.swing = 1; const f = { x: c.x - Math.sin(c.g.rotation.y) * 1.2, y: c.y + 2.6, z: c.z - Math.cos(c.g.rotation.y) * 1.2 };
+    launchBoulder(f.x, f.y, f.z, c.tx, c.ty, c.tz, catDmg()); fxOut({ cp: [r2(f.x), r2(f.y), r2(f.z), r2(c.tx), r2(c.ty), r2(c.tz)] });
+  }
+}
+function bouldersTick(dt){   // host and partner: fly, land, (host) hurt everything in the splash
+  const S = G.sanct;
+  for (const c of S.cats) { c.swing = Math.max(0, c.swing - dt * 2.5); c.pivot.rotation.x = -1.1 * Math.sin(Math.min(1, c.swing) * Math.PI); }
+  for (const b of S.boulders) {
+    b.t += dt / CATA.flight; const t = Math.min(1, b.t);
+    b.m.position.set(b.fx + (b.tx - b.fx) * t, b.fy + (b.ty - b.fy) * t + Math.sin(t * Math.PI) * 7, b.fz + (b.tz - b.fz) * t); b.m.rotation.x += dt * 8;
+    if (t < 1) continue;
+    b.done = true; scene.remove(b.m); burst(new THREE.Vector3(b.tx, b.ty + .4, b.tz), 0xc49a6a, 26, 6);
+    if (player.pos.distanceTo(b.m.position) < 12) G.shake = Math.max(G.shake, .12);
+    if (b.dmg) for (const a of G.aliens) if (!a.dead && a.spawnT >= 1 && Math.hypot(a.pos.x - b.tx, a.pos.z - b.tz) < CATA.radius) { a.stagger = .15; if (a.damage(b.dmg)) onKill(a, true); }
+  }
+  S.boulders = S.boulders.filter(b => !b.done);
+}
+// ---- aim mode: a ring follows where you look; click / E = fire there (green = on the road, in range) ----
+function startAim(c){
+  const S = G.sanct; G.aiming = { c, x: c ? c.x : player.pos.x, z: c ? c.z : player.pos.z, ok: false, hx: 0, hz: 0 };
+  if (!S.aimRing) { S.aimRing = new THREE.Mesh(new THREE.RingGeometry(CATA.radius - .4, CATA.radius, 40), new THREE.MeshBasicMaterial({ color: 0x7cf7b0, transparent: true, opacity: .8, side: THREE.DoubleSide, depthWrite: false })); S.aimRing.rotation.x = -Math.PI / 2; scene.add(S.aimRing); S.signs.push(S.aimRing); }
+  S.aimRing.visible = true; SFX.select();
+}
+function aimTick(){
+  const S = G.sanct, A = G.aiming; if (!A) { if (S.aimRing) S.aimRing.visible = false; return; }
+  camera.updateMatrixWorld(); ray.setFromCamera({ x: 0, y: 0 }, camera);
+  const o = ray.ray.origin, d = ray.ray.direction; let hit = null;
+  for (let t = 1; t < 80; t += .5) { const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t; if (y <= world.groundY(x, z)) { hit = { x, z }; break; } }
+  A.ok = !!hit && Math.hypot(hit.x - A.x, hit.z - A.z) <= CATA.range && world.roadDist(hit.x, hit.z) < 4;
+  if (hit) { A.hx = hit.x; A.hz = hit.z; S.aimRing.position.set(hit.x, world.groundY(hit.x, hit.z) + .08, hit.z); }
+  S.aimRing.visible = !!hit; S.aimRing.material.color.setHex(A.ok ? 0x7cf7b0 : 0xff5a6a);
+  $("#interact").hidden = false; $("#interact").innerHTML = `🎯 조준 · aim: <b>click / E</b> = fire here ${A.ok ? "✓" : "(the road, ≤ 45 m)"}${A.c ? " · <b>2</b> = pick up" : ""} · <b>Q</b> = cancel`;
+}
+function confirmAim(){
+  const S = G.sanct, A = G.aiming; if (!A) return;
+  if (!A.ok) { SFX.empty(); objectiveFlash("🎯 길을 겨냥하세요 · Aim at the glowing road, within 45 m"); return; }
+  const tx = r2(A.hx), tz = r2(A.hz);
+  if (A.c) { if (isClient()) coopAct({ a: "caim", i: S.cats.indexOf(A.c), tx, tz }); aimCatapult(A.c, tx, tz); }
+  else if (isClient()) coopAct({ a: "cplace", x: r2(A.x), z: r2(A.z), tx, tz });
+  else if (S.catKits > 0) { S.catKits--; S.cats.push(makeCatapult(A.x, A.z, tx, tz)); }
+  SFX.reload(); G.aiming = null; objectiveFlash("🎯 조준 완료 · Catapult aimed"); renderMissions();
+}
+function aimPickup(){
+  const S = G.sanct, A = G.aiming; if (!A || !A.c) return;
+  if (isClient()) coopAct({ a: "cpick", i: S.cats.indexOf(A.c) });
+  else { removeCatapult(A.c); S.cats = S.cats.filter(x => x !== A.c); S.catKits++; }
+  G.aiming = null; SFX.select(); objectiveFlash("📦 투석기를 들었어요 · Catapult picked up — E off the road to place it again");
 }
 function deerUse(it){
   if (it.kind === "pickup") pickUpTrap(it.o);
@@ -1697,10 +1788,13 @@ function deerUse(it){
   else if (it.kind === "workshop") openWorkshop();
   else if (it.kind === "lessons") openLessons();
   else if (it.kind === "shelter") openShelter();
+  else if (it.kind === "cataim") startAim(it.o);
+  else if (it.kind === "catplace") startAim(null);
 }
 function deerAct(act){
   if (act === "ammo" && G.panel === "pedestal") ammoQuiz();
   else if (act === "trap" && G.panel === "workshop") trapQuiz();
+  else if (act === "cat" && G.panel === "workshop") catQuiz();
   else if (/^lesson\d$/.test(act) && G.panel === "lessons") { const o = (G.lessonOpts || [])[+act.slice(6)];
     if (o && o.tech && G.coins < techCost()) { SFX.empty(); objectiveFlash(`💰 ${techCost()} 필요해요 · You need 💰${techCost()} (1 per alien)`); return; }
     if (o) lessonCard(o); }
@@ -1718,7 +1812,7 @@ function renderMissions(){
     <div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words <small>— don't let it fall</small></div>
     ${row(fort.towers.length >= fort.towers.length + fort.pads.length, `🗼 탑 짓기 · build towers <b>${fort.towers.length}/${fort.towers.length + fort.pads.length}</b> <small>(🔨 E)</small>`)}
     ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
-    ${row(hits >= trapSlots(), `🪤 함정 · traps <b>${S.traps.length}</b>/${trapSlots()}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
+    ${row(hits >= trapSlots(), `🪤 함정 · traps <b>${S.traps.length}</b>/${trapSlots()}${S.kits ? ` · 📦 ${S.kits} to place` : ""} · 🎯 <b>${S.cats.length}</b>${S.catKits ? ` · 📦 ${S.catKits}` : ""} <small>(workshop)</small>`)}
     ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b> · 💰 ${G.coins}/${techCost()}`) : ""}
     ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>/${herdCap()}${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} · march in ${Math.ceil(S.marchT || 0)} s · 🏕 ${S.camps.filter(c => c.conquered).length}/${S.camps.length} <small>(8 questions per deer)</small>`)}
     <div class="mFoot">Tab 🎒 내 단어 · your words</div>`;
@@ -1726,7 +1820,8 @@ function renderMissions(){
 function deerTick(dt, rdt){
   if (G.mode !== "deer" || G.over || !G.sanct) return;
   const S = G.sanct;
-  if (!isClient()) { towersTick(dt); trapsTick(dt); runnersTick(dt); marchTick(dt); }   // the partner only mirrors
+  if (!isClient()) { towersTick(dt); trapsTick(dt); runnersTick(dt); marchTick(dt); catapultsTick(dt); }   // the partner only mirrors
+  bouldersTick(dt);
   for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
   // 🔧 a light over the workshop while your traps can't kill this wave's boss
   const bossLeft = bossLiveHp();
@@ -1736,8 +1831,9 @@ function deerTick(dt, rdt){
   S.crystal.rotation.y += rdt * 1.5; S.crystal.position.y = world.pedestal.y + 2.4 + Math.sin(G.time * 2) * .12; S.crystalGlow.material.opacity = S.ammo > 0 ? .7 : .2;
   S.deerMesh.rotation.y = Math.sin(G.time * .4) * .5; S.deerMesh.position.y = world.deer.y + .4 + Math.abs(Math.sin(G.time * 1.3)) * .05;
   // interaction prompt
-  const it = !G.noteOpen && !G.backpackOpen ? deerInteract() : null;
+  const it = !G.noteOpen && !G.backpackOpen && !G.aiming ? deerInteract() : null;
   $("#interact").hidden = !it; if (it) $("#interact").innerHTML = it.label; G.interact = it;
+  aimTick();   // 🎯 aim mode shows its own prompt
   // arrow: the deer while it's being hit, else the road when you carry a trap
   let tgt = null;
   if (G.time - S.lastHit < 3 && Math.hypot(world.deer.x - player.pos.x, world.deer.z - player.pos.z) > 12) tgt = { x: world.deer.x, z: world.deer.z, label: "🚨 사슴 · the deer" };
@@ -1902,12 +1998,12 @@ const bossLiveHp = () => { const S = G.sanct; if (isClient()) return S.bossLive 
 function deerSnap(){
   const S = G.sanct;
   return { sd: [Math.round(S.hp), S.max, S.ammo, S.kits, S.herd.length, S.gateHp, S.gateMax, S.hiveBroken ? 1 : 0, Math.round(bossLiveHp()), G.time - S.lastHit < .5 ? 1 : 0,
-      Math.ceil(S.marchT), S.camps.map(c => c.conquered ? -1 : c.alive)],
+      Math.ceil(S.marchT), S.camps.map(c => c.conquered ? -1 : c.alive), S.catKits],
     rn: S.runners.filter(r => r.delay <= 0).map(r => [r2(r.x), r2(r.z)]) };
 }
 function deerFort(){
   const S = G.sanct, ids = a => a.map(w => w.id);
-  return { ww: ids(G.waveWords), wv: G.wave, tr: S.traps.map(t => [r2(t.x), r2(t.z)]), dw: ids(S.deerWords), tech: [...S.tech], ln: S.learned };
+  return { ww: ids(G.waveWords), wv: G.wave, tr: S.traps.map(t => [r2(t.x), r2(t.z)]), ct: S.cats.map(c => [r2(c.x), r2(c.z), r2(c.tx), r2(c.tz)]), dw: ids(S.deerWords), tech: [...S.tech], ln: S.learned };
 }
 function applyDeerFort(f){
   const S = G.sanct; if (!S || !f.dw) return;
@@ -1915,13 +2011,14 @@ function applyDeerFort(f){
   S.deerWords = f.dw.map(wordById).filter(Boolean); S.deerIds = new Set(f.dw); S.techWord = {};
   TECHS.forEach((t, i) => { if (S.deerWords[i]) S.techWord[t.id] = S.deerWords[i]; }); S.growWords = S.deerWords.slice(TECHS.length);
   const had = S.tech.size; S.tech = new Set(f.tech); S.learned = f.ln; if (S.tech.size !== had) fort.towers.forEach(towerSignDeer);
+  const ck = JSON.stringify(f.ct || []); if (ck !== S.catKey) { S.catKey = ck; S.cats.forEach(removeCatapult); S.cats = (f.ct || []).map(([x, z, tx, tz]) => makeCatapult(x, z, tx, tz)); }
   const tk = JSON.stringify(f.tr); if (tk !== S.trapKey) { S.trapKey = tk; for (const t of S.traps) scene.remove(t.g); S.traps = f.tr.map(([x, z]) => makeTrap(x, z)); }
   growDeer();
   if (f.wv > S.briefWave && G.waveWords.length) { if (G.noteOpen || G.backpackOpen) S.pendingBrief = true; else { S.briefWave = f.wv; openBrief(G.waveWords); } }
 }
 function applyDeerSnap(s){
   const S = G.sanct; if (!S || !s.sd) return;
-  const [hp, max, ammo, kits, herd, gate, gmax, broken, boss, hit, march, camps] = s.sd;
+  const [hp, max, ammo, kits, herd, gate, gmax, broken, boss, hit, march, camps, catKits] = s.sd; S.catKits = catKits || 0;
   S.marchT = march; (camps || []).forEach((v, i) => { const c = S.camps[i]; if (!c) return; if (v < 0) { if (!c.conquered) { c.conquered = true; burst(new THREE.Vector3(c.x, 3, c.z), 0xffcf5c, 90, 9); } } else c.alive = v; campVisual(c); });
   Object.assign(S, { hp, max, ammo, kits, gateHp: gate, gateMax: gmax, hiveBroken: !!broken, bossLive: boss }); if (!G.bossOut) S.bossHp = boss; if (hit) S.lastHit = G.time;
   renderHP(); gateVisual();
@@ -1941,6 +2038,10 @@ function deerHostAction(ev){
   else if (ev.a === "dbuild") { const p = fort.pads[ev.i]; if (p) deerBuildTower(p); }
   else if (ev.a === "train") { if (armySize() < herdCap()) addHerdDeer(); }
   else if (ev.a === "charge") charge(true);
+  else if (ev.a === "catkit") { S.catKits++; objectiveFlash(`${who}: 🎯 +1 catapult`); }
+  else if (ev.a === "cplace") { if (S.catKits > 0) { S.catKits--; S.cats.push(makeCatapult(ev.x, ev.z, ev.tx, ev.tz)); } }
+  else if (ev.a === "caim") { const c = S.cats[ev.i]; if (c) aimCatapult(c, ev.tx, ev.tz); }
+  else if (ev.a === "cpick") { const c = S.cats[ev.i]; if (c) { removeCatapult(c); S.cats = S.cats.filter(x => x !== c); S.catKits++; } }
   else if (ev.a === "learn") { const w = wordById(ev.w), tech = TECHS.find(t => t.id === ev.t) || null;
     if (w && !G.unlocked.includes(w) && (!tech || (G.coins >= techCost() && !S.tech.has(tech.id)))) learnDeerWord({ w, tech }); }
 }
@@ -1965,7 +2066,8 @@ $("#chatInput").addEventListener("keydown", e => {
 });
 function clearDeer(){
   const S = G.sanct;
-  if (S) { for (const g of S.herd || []) scene.remove(g); for (const r of S.runners || []) scene.remove(r.g);
+  if (S) { (S.cats || []).forEach(removeCatapult); for (const b of S.boulders || []) scene.remove(b.m);
+    for (const g of S.herd || []) scene.remove(g); for (const r of S.runners || []) scene.remove(r.g);
     for (const g of S.runnerMeshes || []) scene.remove(g);
     for (const t of S.traps) scene.remove(t.g); if (S.trapBeam) scene.remove(S.trapBeam); if (S.deerMesh) scene.remove(S.deerMesh); (S.signs || []).forEach(s => scene.remove(s)); if (S.crystal) scene.remove(S.crystal); }
   if (G.demon) { G.demon.f.remove(); G.demon = null; }
@@ -2027,7 +2129,7 @@ function hostMsg(d){
     else if (ev.a === "chat") addChat("👥 파트너 · partner", String(ev.t || "").slice(0, 200));
     else if (ev.a === "duelOk" && G.sanct) { G.sanct.duelHits.p++; if (G.duel) duelBar(); checkDuelEnd(); }
     else if (ev.a === "zap") zapMe();
-    else if (G.mode === "deer" && ["ammo", "kit", "place", "pick", "dbuild", "train", "charge", "learn"].includes(ev.a)) deerHostAction(ev);
+    else if (G.mode === "deer" && ["ammo", "kit", "place", "pick", "dbuild", "train", "charge", "learn", "catkit", "cplace", "caim", "cpick"].includes(ev.a)) deerHostAction(ev);
     else if (ev.a === "free") { const h = partner.stuck; partner.stuck = null; for (const o of G.dogs) o.cd = Math.max(o.cd, 2); if (h && h !== true) { h.cd = 4; const dx = h.x - partner.pos.x, dz = h.z - partner.pos.z, dd = Math.hypot(dx, dz) || 1; world.moveEntity(h, dx / dd * 3, dz / dd * 3, .35, 0); } }
   }
 }
@@ -2167,6 +2269,7 @@ function clientSync(dt, rdt){
       burst(new THREE.Vector3(ev.blast[0], ev.blast[1] + 1.5, ev.blast[2]), 0xffcf5c, 150, 18); G.note && (G.note.passed = false);
       objective("💥 보스 처치! 쪽지를 읽으세요 (둘 다 통과해야 해요) · Boss down — read the note 📜 (both of you must pass it)"); }
     else if (ev.chat) addChat("👥 파트너 · partner", String(ev.chat).slice(0, 200));
+    else if (ev.cp && G.sanct) { const c = ev.cp; launchBoulder(c[0], c[1], c[2], c[3], c[4], c[5], 0); }
     else if (ev.duel === 1) startDuelLocal();
     else if (ev.duel === 0) finishDuelLocal();
     else if (ev.zap) zapMe();
@@ -2240,7 +2343,7 @@ $("#joinBtn").onclick = () => {
 
 /* ================================ start / pause / over ================================ */
 function resetRun(){
-  clearFortifications(false); clearDeer(); $("#interact").hidden = true; G.chatting = false; $("#chatBox").hidden = true;
+  clearFortifications(false); clearDeer(); $("#interact").hidden = true; G.chatting = false; $("#chatBox").hidden = true; G.aiming = null;
   removeHounds(false);
   (G.mercs || []).forEach(m => scene.remove(m.g)); if (G.deer) scene.remove(G.deer.g);
   if (G.note) scene.remove(G.note.s); $("#note").hidden = true; beam.visible = false;
