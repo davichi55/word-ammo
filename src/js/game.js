@@ -50,7 +50,8 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .8, .5, .72);
 composer.addPass(bloom); composer.addPass(new OutputPass());
-addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+addEventListener("resize", () => { if (!innerWidth || !innerHeight) return;   // a hidden/minimised window reports 0×0: keep the last good size
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 // two maps, one shown at a time: the old town (district, escape, survival, fortress) and the snowy valley (deer sanctuary)
 const districtRoot = new THREE.Group(), deerRoot = new THREE.Group(); scene.add(districtRoot, deerRoot); deerRoot.visible = false;
 const districtWorld = buildWorld(districtRoot);
@@ -93,7 +94,7 @@ function drawGunScreen(){
   g.strokeStyle = "#7cf7d4"; g.lineWidth = 4; g.strokeRect(3, 3, 250, 90);
   const w = G.loaded; g.fillStyle = "#7cf7d4"; g.textAlign = "center"; g.textBaseline = "middle";
   let fs = 44; g.font = `bold ${fs}px "Malgun Gothic", sans-serif`;
-  const txt = w ? w.kr : "EMPTY"; while (g.measureText(txt).width > 230 && fs > 18) { fs -= 2; g.font = `bold ${fs}px "Malgun Gothic", sans-serif`; }
+  const txt = w ? w.kr : G.duel ? "👑 DUEL" : "EMPTY"; while (g.measureText(txt).width > 230 && fs > 18) { fs -= 2; g.font = `bold ${fs}px "Malgun Gothic", sans-serif`; }
   g.fillText(txt, 128, 50); screenTex.needsUpdate = true;
 }
 // the gun lying on a pedestal at the start (tutorial)
@@ -379,7 +380,7 @@ function renderQuick(){
 function renderDash(){ const k = 1 - player.dashCd / .55; $("#dashPips").innerHTML = `<i style="width:${Math.round(20 + 50 * k)}px" class="${k < 1 ? "off" : ""}"></i>`; }
 function renderTop(){ const left = G.aliens.filter(a => !a.dead).length;
   if (G.mode === "deer" && G.sanct) { const b = G.bossOut;
-    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? `👑 ❤ ${Math.max(0, Math.ceil(bossLiveHp()))}` : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
+    $("#waveLbl").textContent = `🦌 Wave ${G.wave} · ${b ? "👑 결투 · duel" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💎 ${G.sanct.ammo} · 💰 ${G.coins} · 🎒 ${G.unlocked.length}/${G.pool.length} words${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`;
     $("#scoreLbl").textContent = `🦌 ❤ ${Math.ceil(G.sanct.hp)}`; return; }
   if (G.mode === "fortress") { const z = world.zones[G.zone];
     $("#waveLbl").textContent = `🏰 Wave ${G.wave} · ${G.bossOut ? "👑 BOSS" : `${Math.min(G.waveKills, G.waveSize)}/${G.waveSize}`} · 💰 ${G.coins} · 🎒 ${G.unlocked.length} words · 📍 ${z.ko}${G.calmT > 0 ? ` · 😮‍💨 ${Math.ceil(G.calmT)}s` : ""}`; $("#scoreLbl").textContent = `★ ${G.score}`; return; }
@@ -474,6 +475,7 @@ $("#clickToPlay").onclick = () => { initAudio(); lock(); };
 renderer.domElement.addEventListener("mousedown", e => {
   if (!G.running || G.paused || G.over) return;
   if (document.pointerLockElement !== renderer.domElement) { lock(); return; }
+  if (G.duel) { if (e.button === 0) duelFire(); return; }   // 👑 the boss duel: shoot an answer
   if (e.button === 0) { G.firing = true; fire(); }
 });
 addEventListener("mouseup", e => { if (e.button === 0) G.firing = false; });
@@ -1271,12 +1273,12 @@ function victory(){
 const SANCT = { ammoQuiz: 30, trapCost: 4, trapRearm: 2.5, deerMax: 1000, towerDmg: [34, 54, 80], trapDmg: [100, 180, 320] };
 const TECHS = [
   { id: "tower2", icon: "🗼", ko: "탑 강화 I", en: "Towers Lv 2: +60% damage" },
-  { id: "trap2", icon: "🪤", ko: "함정 강화 I", en: "Traps Lv 2: boss damage 100 → 180" },
+  { id: "trap2", icon: "🪤", ko: "함정 강화 I", en: "Traps Lv 2: re-arm twice as fast" },
   { id: "slot3", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (3 on the road)" },
   { id: "battery", icon: "🔋", ko: "수정 배터리", en: "Every ammo quiz gives +50% ammo" },
   { id: "frost", icon: "❄️", ko: "얼음 함정", en: "A trap that fires also freezes aliens within 5 m for 3 s" },
   { id: "tower3", icon: "🗼", ko: "탑 강화 II", en: "Towers Lv 3: +50% damage, +4 m range", need: "tower2" },
-  { id: "trap3", icon: "🪤", ko: "함정 강화 II", en: "Traps Lv 3: boss damage 180 → 320", need: "trap2" },
+  { id: "trap3", icon: "🪤", ko: "함정 강화 II", en: "Traps Lv 3: half the ammo per shot", need: "trap2" },
   { id: "slot4", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (4 on the road)", need: "slot3" },
   { id: "pad5", icon: "🔨", ko: "다섯 번째 탑", en: "A 5th tower spot on the terrace" },
   { id: "slot5", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (5 on the road)", need: "slot4" },
@@ -1284,6 +1286,7 @@ const TECHS = [
 const has = id => !!(G.sanct && G.sanct.tech.has(id));
 const towerLv = () => has("tower3") ? 2 : has("tower2") ? 1 : 0;
 const trapLv = () => has("trap3") ? 2 : has("trap2") ? 1 : 0;
+const trapCost = () => [4, 4, 2][trapLv()], trapRearm = () => [2.5, 1.25, 1.25][trapLv()];
 const trapSlots = () => 2 + (has("slot3") ? 1 : 0) + (has("slot4") ? 1 : 0) + (has("slot5") ? 1 : 0);
 // The deer grows in 10 stages spread over your word list (capped at 120 words), so a 20-word game and a 100-word game
 // pace the same way. Each stage raises the herd limit; the hive's shield only drops at stage 8.
@@ -1349,13 +1352,13 @@ function openBrief(words){
   $("#noteBody").innerHTML = `<div class="brief">${words.map((w, i) => `<div class="bRow"><span class="k">${i + 1}</span><div class="bKr"><b class="${w.kr.length > 9 ? "long" : ""}">${esc(w.kr)}</b><button data-say="${w.id}">🔊</button></div><small>${POS_KO[w.pos] || ""} · ${CAT[w.cat].icon}</small><span class="m">${esc(meaning(w))}</span></div>`).join("")}</div>
     <div class="nHint">잘 외우세요! 이번 웨이브의 모든 퀴즈에 나와요 · Learn these — this wave's quizzes use them.<br>
     💎 탄약 = 문제 2개 · ammo: 2 questions at the pedestal · 🔧 함정 = 문제 8개 (이 4단어) · a trap: 8 questions on these 4 words<br>
-    👑 보스는 함정으로만! · The boss can only be hurt by traps · 🦌 사슴의 수업 = new technology</div>`;
+    👑 웨이브 끝에 보스와 결투: 이 4단어! · at the end of the wave the boss duels you on these 4 words · 🦌 사슴의 수업 = new technology</div>`;
   $("#noteClose").hidden = false; $("#noteClose").textContent = "시작 · Start (E)";
   say(words.map(w => wordClip(w.id)));
 }
 function closeBrief(){
   closePanel();
-  objective(`🦌 Wave ${G.wave}: ${G.waveSize} aliens, then the boss 👑 (❤ ${G.sanct.bossHp}, traps only)`);
+  objective(`🦌 Wave ${G.wave}: ${G.waveSize} aliens, then a 👑 boss duel on these words`);
   setTimeout(() => { if (G.mode === "deer" && G.running && G.panel !== "brief") objective(""); }, 7000);
 }
 function growDeer(){
@@ -1390,7 +1393,7 @@ function renderPedestal(){
   const S = G.sanct, per = ammoPerQuiz(), left = Math.max(0, G.waveSize - G.waveKills), need = left * Math.ceil(alienHp(G.wave) / SANCT.towerDmg[towerLv()]);
   $("#noteBody").innerHTML = `<div class="qHead">💎 탄약 · Ammo: <b>${S.ammo}</b> ${S.ammo < need ? `· ⚠ ~${need} needed for ${left} aliens` : "· ✓ enough for now"}</div>
     <div class="dList">${fort.towers.map((t, i) => `<div>🗼 ${i + 1} · Lv ${towerLv() + 1} · ${t.kills || 0} kills</div>`).join("") || "<div>🔨 탑이 없어요 · no towers yet — E at a 🔨 spot</div>"}
-    <div>🪤 ${S.traps.length}/${trapSlots()} traps on the road${S.kits ? ` · 📦 ${S.kits} kit${S.kits > 1 ? "s" : ""} to place` : ""} · each shot = ${SANCT.trapCost} ammo</div></div>
+    <div>🪤 ${S.traps.length}/${trapSlots()} traps on the road${S.kits ? ` · 📦 ${S.kits} kit${S.kits > 1 ? "s" : ""} to place` : ""} · each shot = ${trapCost()} ammo</div></div>
     <div class="shop" style="margin-top:10px"><button data-act="ammo"><span class="k">1</span><b>탄약 만들기 · Make ammo</b> <small>2 questions about one word (meaning, word type)</small><span class="c">+${per}</span></button></div>`;
 }
 function ammoQuiz(){
@@ -1404,10 +1407,9 @@ function ammoQuiz(){
 // ---- workshop: traps ----
 function openWorkshop(){ openPanel("workshop", "🔧 작업장 · Workshop"); renderWorkshop(); }
 function renderWorkshop(){
-  const S = G.sanct, full = S.traps.length + S.kits >= trapSlots(), dmg = SANCT.trapDmg[trapLv()];
-  $("#noteBody").innerHTML = `<div class="qHead">🪤 ${S.traps.length}/${trapSlots()} on the road${S.kits ? ` · 📦 ${S.kits} to place` : ""} · Lv ${trapLv() + 1}: boss −${dmg}${has("frost") ? " · ❄️ freezes" : ""}</div>
-    <div class="dList"><div>👑 이번 보스 · this wave's boss: ❤ ${S.bossHp} → needs ${Math.ceil(S.bossHp / dmg)} trap hits (you have ${S.traps.length + S.kits})</div>
-    <div>함정은 밟으면 터져요 (탄약 ${SANCT.trapCost}) · a trap fires when an alien steps on it (${SANCT.trapCost} ammo), then re-arms</div></div>
+  const S = G.sanct, full = S.traps.length + S.kits >= trapSlots();
+  $("#noteBody").innerHTML = `<div class="qHead">🪤 ${S.traps.length}/${trapSlots()} on the road${S.kits ? ` · 📦 ${S.kits} to place` : ""} · Lv ${trapLv() + 1}${has("frost") ? " · ❄️ freezes" : ""}</div>
+    <div class="dList"><div>함정은 밟은 외계인을 없애요 · a trap kills any alien that steps on it (💎 ${trapCost()} ammo), then re-arms in ${trapRearm()} s</div></div>
     <div class="shop" style="margin-top:10px"><button data-act="trap" ${full ? "disabled" : ""}><span class="k">1</span><b>함정 만들기 · Build a trap</b> <small>8 questions on this wave's 4 new words</small><span class="c">${full ? "FULL" : "🪤 +1"}</span></button></div>`;
 }
 function trapQuiz(){
@@ -1441,12 +1443,12 @@ function trapsTick(dt){
   const S = G.sanct;
   for (const t of S.traps) {
     t.cd -= dt; t.pop = Math.max(0, t.pop - dt * 2.5); t.spikes.position.y = -.5 + .55 * Math.min(1, t.pop * 2);
-    t.ring.material.color.setHex(t.cd > 0 ? 0x5a4a3a : S.ammo < SANCT.trapCost ? 0x884444 : 0xff9a3a);
+    t.ring.material.color.setHex(t.cd > 0 ? 0x5a4a3a : S.ammo < trapCost() ? 0x884444 : 0xff9a3a);
     if (t.cd > 0) continue;
     const victims = G.aliens.filter(a => !a.dead && a.spawnT >= 1 && Math.hypot(a.pos.x - t.x, a.pos.z - t.z) < (a.special ? 2.6 : 2) && Math.abs(a.pos.y - t.y) < 1.5);
     if (!victims.length) continue;
-    if (S.ammo < SANCT.trapCost) { if (G.time - S.lastAmmoWarn > 6) { S.lastAmmoWarn = G.time; objectiveFlash("⚠️ 함정에 탄약이 없어요! · A trap has no ammo — make ammo at the 💎 pedestal"); } continue; }
-    S.ammo -= SANCT.trapCost; t.cd = SANCT.trapRearm; t.pop = 1; SFX.slam(); G.shake = Math.max(G.shake, player.pos.distanceTo(t.g.position) < 20 ? .3 : 0);
+    if (S.ammo < trapCost()) { if (G.time - S.lastAmmoWarn > 6) { S.lastAmmoWarn = G.time; objectiveFlash("⚠️ 함정에 탄약이 없어요! · A trap has no ammo — make ammo at the 💎 pedestal"); } continue; }
+    S.ammo -= trapCost(); t.cd = trapRearm(); t.pop = 1; SFX.slam(); G.shake = Math.max(G.shake, player.pos.distanceTo(t.g.position) < 20 ? .3 : 0);
     burst(new THREE.Vector3(t.x, t.y + .6, t.z), 0xff9a3a, 40, 7); fxOut({ b: [t.x, t.y + .6, t.z, 0xff9a3a] });
     for (const a of victims) {
       if (a.special) { const dmg = SANCT.trapDmg[trapLv()]; floater(a.aimPoint(), `👑 −${dmg}`, "#ff9a3a", 32, 1.2); a.stagger = .5; if (a.damage(dmg)) onKill(a, true); }
@@ -1551,6 +1553,114 @@ function spawnDeerBoss(){
   setTimeout(() => { if (G.mode === "deer" && G.running && G.bossOut) objective(""); }, 8000);
   SFX.charge(); renderTop(); renderMissions();
 }
+// ---- 👑 the boss duel: the boss pulls you (and your partner) onto floating platforms. A plain gun; the boss shows a word,
+// you shoot the right answer among 4 panels. 4 questions each (this wave's words). Wrong = your TEAMMATE gets zapped
+// (just for fun; solo: you) and you redo it. Both done = the boss is beaten. Nobody can lose here.
+const DUEL = { y: 40, z: 0, left: 21, right: 29, bossZ: 27 };
+function textTex(main, sub, w = 1024, h = 256, bg = "rgba(8,16,30,.85)", fg = "#e9fffa"){
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g2 = c.getContext("2d");
+  g2.fillStyle = bg; g2.beginPath(); g2.roundRect(6, 6, w - 12, h - 12, 28); g2.fill(); g2.strokeStyle = "#7ce8ff"; g2.lineWidth = 8; g2.stroke();
+  g2.fillStyle = fg; g2.textAlign = "center"; g2.textBaseline = "middle";
+  let fs2 = Math.round(h * (sub ? .42 : .5)); const font = () => g2.font = `900 ${fs2}px "Malgun Gothic", sans-serif`; font();
+  while (g2.measureText(main).width > w - 60 && fs2 > 20) { fs2 -= 4; font(); }
+  g2.fillText(main, w / 2, sub ? h * .42 : h / 2);
+  if (sub) { g2.font = `${Math.round(h * .16)}px "Malgun Gothic", sans-serif`; g2.fillStyle = "#7ce8ff"; g2.fillText(sub, w / 2, h * .82); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function buildArena(){
+  const S = G.sanct; if (S.arena) { S.arena.g.visible = true; return S.arena; }
+  const g = new THREE.Group(); scene.add(g); S.signs.push(g);
+  const stone = new THREE.MeshStandardMaterial({ color: 0x8fa6c8, roughness: .6, emissive: 0x1a3050, emissiveIntensity: .5 });
+  for (const x of [DUEL.left, DUEL.right]) {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 1, 1.2, 24), stone); p.position.set(x, DUEL.y - .6, DUEL.z); g.add(p);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.4, .07, 8, 40), new THREE.MeshBasicMaterial({ color: 0x7ce8ff })); ring.rotation.x = Math.PI / 2; ring.position.set(x, DUEL.y + .02, DUEL.z); g.add(ring);
+  }
+  const boss = new Alien(g, new THREE.Vector3(25, DUEL.y - 4, DUEL.bossZ), G.unlocked[0], { special: true, shirt: "👑", hp: 1e9 });
+  boss.root.scale.setScalar(4.6); boss.root.rotation.y = Math.PI;
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: textTex("…", ""), transparent: true, toneMapped: false })); board.position.set(25, DUEL.y + 7.5, DUEL.bossZ - 9); board.rotation.y = Math.PI; g.add(board);
+  const bar = new THREE.Mesh(new THREE.PlaneGeometry(10, .9), new THREE.MeshBasicMaterial({ map: textTex("👑", "", 1024, 96), transparent: true, toneMapped: false })); bar.position.set(25, DUEL.y + 5.3, DUEL.bossZ - 9); bar.rotation.y = Math.PI; g.add(bar);
+  return (S.arena = { g, boss, board, bar, targets: [] });
+}
+function duelQuestions(){
+  const ws = (G.waveWords.length ? G.waveWords : G.unlocked.slice(-4)).slice(0, 4);
+  while (ws.length < 4 && G.unlocked.length) ws.push(pick(G.unlocked));
+  return shuffleA(ws).map((w, i) => knownQuestion(w, [i % 2 ? "kr" : "mean"]));
+}
+function setTex(mesh, tex){ const old = mesh.material.map; mesh.material.map = tex; mesh.material.needsUpdate = true; if (old) old.dispose(); }
+function renderDuel(){
+  const D = G.duel, A = G.sanct.arena; if (!D) return;
+  for (const t of A.targets) A.g.remove(t); A.targets = [];
+  if (D.i >= D.qs.length) { setTex(A.board, textTex("✓", G.coop ? "파트너를 기다려요 · waiting for your partner" : "")); return; }
+  const q = D.qs[D.i], showKr = !!q.audio;
+  setTex(A.board, textTex(showKr ? q.w.kr : meaning(q.w), `${D.i + 1}/${D.qs.length} · ${showKr ? "뜻은? · the meaning?" : "한국어로? · in Korean?"}`));
+  if (showKr) say([wordClip(q.w.id)], { interrupt: true });
+  q.opts.forEach((o, i) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.3), new THREE.MeshBasicMaterial({ map: textTex(o, "", 768, 290, "rgba(20,30,50,.92)"), transparent: true, toneMapped: false }));
+    m.position.set(D.x + (i % 2 ? 1.85 : -1.85), DUEL.y + 1.2 + (i < 2 ? 1.6 : 0), DUEL.z + 8); m.rotation.y = Math.PI; m.userData.opt = i; A.g.add(m); A.targets.push(m);
+  });
+}
+function duelBar(){
+  const S = G.sanct, H = S.duelHits || { me: 0, p: 0 }, need = G.coop ? 8 : 4, done = Math.min(need, H.me + H.p);
+  setTex(S.arena.bar, textTex(`👑 ${"■".repeat(need - done)}${"□".repeat(done)}`, "", 1024, 96));
+}
+function startDuelLocal(){
+  const S = G.sanct; if (G.duel) return;
+  if (G.demon) closeDemon(); if (G.noteOpen) closePanel(); if (G.backpackOpen) closeBackpack(false);
+  const A = buildArena(), side = isClient() ? "right" : "left", x = DUEL[side];
+  G.duel = { side, x, qs: duelQuestions(), i: 0, zapT: 0, back: { x: player.body.x, y: player.body.y, z: player.body.z, yaw: player.yaw } };
+  S.duelHits = { me: 0, p: 0 };
+  Object.assign(player.body, { x, y: DUEL.y, z: DUEL.z, vy: 0 }); player.feet = DUEL.y; player.pos.set(x, DUEL.y + 1.7, DUEL.z); player.vel.set(0, 0, 0);
+  player.yaw = Math.PI; player.pitch = .08; player.hasGun = true; gun.visible = true; G.firing = false;
+  A.boss.word = G.unlocked[0]; renderDuel(); duelBar(); drawGunScreen(); SFX.charge();
+  burst(player.pos.clone(), 0x7ce8ff, 60, 8);
+  objective("👑 결투! · DUEL — shoot the right answer (click). A wrong one zaps " + (G.coop ? "your partner ⚡" : "you ⚡"));
+  setTimeout(() => { if (G.duel) objective(""); }, 6000);
+}
+function finishDuelLocal(){
+  const S = G.sanct, D = G.duel; if (!D) return;
+  const A = S.arena; for (let i = 0; i < 5; i++) burst(A.boss.aimPoint(), [0x9fdcff, 0xffffff, 0xff9a3a, 0x7cf7d4, 0xffcf5c][i], 140, 14 + i * 4);
+  SFX.slam(); SFX.kill(); G.shake = 1;
+  setTimeout(() => {
+    A.g.visible = false; for (const t of A.targets) A.g.remove(t); A.targets = [];
+    Object.assign(player.body, { x: D.back.x, y: D.back.y, z: D.back.z, vy: 0 }); player.feet = D.back.y; player.pos.set(D.back.x, D.back.y + 1.7, D.back.z); player.yaw = D.back.yaw;
+    player.hasGun = false; gun.visible = false; G.duel = null;
+    objective("💥 보스를 이겼어요! · Boss beaten — the next wave brings 4 new words"); setTimeout(() => objective(""), 5000);
+  }, 1200);
+}
+function beginDuel(){ const S = G.sanct; G.bossOut = true; S.duelT = 3; SFX.charge();
+  objective("👑 보스가 결투를 신청해요! · The boss challenges you to a duel — 3 s…"); renderTop(); }
+function duelFire(){
+  const D = G.duel, A = G.sanct.arena; if (!D || D.zapT > 0 || D.i >= D.qs.length) return;
+  camera.updateMatrixWorld(); ray.setFromCamera({ x: 0, y: 0 }, camera);
+  gun.userData.kick = 1; flash.material.opacity = 1; gunLight.intensity = 6;
+  const hit = ray.intersectObjects(A.targets, false)[0], from = new THREE.Vector3(); muzzle.getWorldPosition(from);
+  if (!hit) { SFX.shot(); tracer(from, ray.ray.origin.clone().addScaledVector(ray.ray.direction, 30), 0xb8b0ff, true); return; }
+  const q = D.qs[D.i], ok = q.opts[hit.object.userData.opt] === q.ans; tracer(from, hit.point, ok ? 0x7cf7d4 : 0xff6b8a, true);
+  mark(q.w, ok);
+  if (ok) {
+    SFX.shotGood(); burst(hit.point, 0x7cf7d4, 30, 6); burst(A.boss.aimPoint(), 0xffcf5c, 50, 8); hitmarker(true);
+    if (q.audioAfter) say([wordClip(q.w.id)], { interrupt: true });
+    D.i++; G.sanct.duelHits.me++; duelBar(); renderDuel();
+    if (isClient()) coopAct({ a: "duelOk" }); else checkDuelEnd();
+  } else {
+    SFX.resist(); hitmarker(false); floater(hit.point, "✗", "#ff6b8a", 40);
+    if (!q.fixed) q.opts = shuffleA(q.opts); renderDuel();
+    if (!G.coop) zapMe(); else if (isHost()) fxOut({ zap: 1 }); else coopAct({ a: "zap" });
+  }
+}
+function zapMe(){   // ⚡ purely for fun: blue flash, shake, a few bolts, 0.9 s without shooting
+  if (G.duel) G.duel.zapT = .9;
+  SFX.hurt(); G.shake = .7; const v = $("#vignette"); v.style.boxShadow = "inset 0 0 300px 140px rgba(140,220,255,.85)"; setTimeout(() => v.style.boxShadow = "", 450);
+  for (let i = 0; i < 6; i++) { const to = player.pos.clone().add(new THREE.Vector3(rnd(-.6, .6), -.6, rnd(-.6, .6))); tracer(to.clone().add(new THREE.Vector3(rnd(-2, 2), 4, rnd(-2, 2))), to, 0x9fe8ff, true); }
+  burst(player.pos.clone().setY(player.pos.y - .5), 0x9fe8ff, 40, 6);
+  objectiveFlash(G.coop ? "⚡ 찌릿! 파트너가 틀렸어요 · zzzt — your partner got one wrong" : "⚡ 찌릿! · zzzt — wrong answer");
+}
+function checkDuelEnd(){
+  const S = G.sanct, H = S.duelHits;
+  if (!G.duel || H.me < 4 || (G.coop && H.p < 4)) { if (G.coop) fxOut({ duelbar: [H.me, H.p] }); return; }
+  if (G.coop) fxOut({ duel: 0 });
+  finishDuelLocal(); G.bossOut = false; S.nextWaveT = 5; G.coins += 20; renderTop();
+}
 // ---- interactions ----
 function deerInteract(){
   const S = G.sanct, W = world, near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
@@ -1595,7 +1705,7 @@ function renderMissions(){
     <div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words <small>— don't let it fall</small></div>
     ${row(fort.towers.length >= fort.towers.length + fort.pads.length, `🗼 탑 짓기 · build towers <b>${fort.towers.length}/${fort.towers.length + fort.pads.length}</b> <small>(🔨 E)</small>`)}
     ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
-    ${row(hits * dmg >= bossHp, `🪤 보스 · boss ❤ <b>${bossHp}</b> — traps ${hits} × ${dmg} = ${hits * dmg}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
+    ${row(hits >= trapSlots(), `🪤 함정 · traps <b>${S.traps.length}</b>/${trapSlots()}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
     ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b> · 💰 ${G.coins}/${techCost()}`) : ""}
     ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>/${herdCap()}${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} · march in ${Math.ceil(S.marchT || 0)} s · 🏕 ${S.camps.filter(c => c.conquered).length}/${S.camps.length} <small>(8 questions per deer)</small>`)}
     <div class="mFoot">Tab 🎒 내 단어 · your words</div>`;
@@ -1607,7 +1717,7 @@ function deerTick(dt, rdt){
   for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
   // 🔧 a light over the workshop while your traps can't kill this wave's boss
   const bossLeft = bossLiveHp();
-  S.trapBeam.visible = (S.traps.length + S.kits) * SANCT.trapDmg[trapLv()] < bossLeft && S.traps.length + S.kits < trapSlots();
+  S.trapBeam.visible = S.traps.length + S.kits === 0 && !G.duel;   // no traps at all yet: the workshop lights up
   S.trapBeam.material.opacity = .18 + Math.sin(G.time * 3) * .07;
   S.shield.visible = gateShielded() && !S.hiveBroken; S.shield.material.opacity = .22 + Math.sin(G.time * 2) * .06;
   S.crystal.rotation.y += rdt * 1.5; S.crystal.position.y = world.pedestal.y + 2.4 + Math.sin(G.time * 2) * .12; S.crystalGlow.material.opacity = S.ammo > 0 ? .7 : .2;
@@ -1621,13 +1731,15 @@ function deerTick(dt, rdt){
   $("#radar").hidden = !tgt || G.noteOpen;
   if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
     $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`; $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
+  if (G.duel) G.duel.zapT = Math.max(0, G.duel.zapT - rdt);
   S.missionsT -= rdt; if (S.missionsT <= 0) { S.missionsT = .5; renderMissions(); if (G.panel === "shelter") renderShelter(); }
   // waves (the host runs them)
   if (isClient()) return;
   if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen && !G.coop) S.nextWaveT = .2; else deerWave(); } return; }
   if (G.calmT > 0) { G.calmT -= dt; if (Math.floor(G.calmT) !== G.lastCalm) { G.lastCalm = Math.floor(G.calmT); renderTop(); } return; }
   if (S.introTip && G.waveSpawned > 0) { S.introTip = false; helperHide = .1; }   // the aliens are coming: Lumi's intro can go
-  if (G.waveKills >= G.waveSize && !G.bossOut) spawnDeerBoss();
+  if (S.duelT > 0) { S.duelT -= dt; if (S.duelT <= 0) { if (G.coop) fxOut({ duel: 1 }); startDuelLocal(); } }
+  if (G.waveKills >= G.waveSize && !G.bossOut) beginDuel();
   const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(30, 12 + G.wave * 2);
   G.spawnT -= dt;
   if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
@@ -1651,7 +1763,7 @@ function renderShelter(){   // no explanations: the numbers + watching the herd 
   $("#noteBody").innerHTML = `<div class="shel">
       <div class="herd">🦌 <b>${n}</b><small>/${herdCap()}</small></div>
       <div class="road">⚔️ <b>${Math.ceil(S.marchT)}s</b> ${camps}<span>${S.hiveBroken ? "🏆" : gateShielded() ? "🛡" : "🚪 " + S.gateHp}</span></div></div>
-    <div class="shop"><button data-act="train" ${full ? "disabled" : ""}><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions</small><span class="c">${full ? "FULL" : "🦌 +1"}</span></button></div>`;
+    <div class="shop"><button data-act="train" ${full ? "disabled" : ""}><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>4 questions</small><span class="c">${full ? "FULL" : "🦌 +1"}</span></button></div>`;
 }
 const CAMPS = [[3, 10, 60], [4, 22, 120], [5, 34, 200]];   // [gold-road waypoint, defenders, 💰 reward] — about what the herd holds at stages 1, 3, 5
 const MARCH_EVERY = 30;
@@ -1697,8 +1809,8 @@ function marchTick(dt){   // every 30 s: the camps refill, and the whole herd ma
 }
 function trainQuiz(){
   const qs = [], used = new Set();
-  for (let i = 0; i < 8; i++) { let w = pickQuizWord(); for (let k = 0; k < 5 && used.has(w.id); k++) w = pickQuizWord(); used.add(w.id); qs.push(knownQuestion(w)); }
-  deerQuiz("trainq", "🦌 사슴 훈련 · Training (8)", qs, () => { if (isClient()) { coopAct({ a: "train" }); SFX.pickup(); objectiveFlash("🦌 +1 · 무리 · herd"); } else addHerdDeer(); openShelter(); });
+  for (let i = 0; i < 4; i++) { let w = pickQuizWord(); for (let k = 0; k < 5 && used.has(w.id); k++) w = pickQuizWord(); used.add(w.id); qs.push(knownQuestion(w)); }
+  deerQuiz("trainq", "🦌 사슴 훈련 · Training (4)", qs, () => { if (isClient()) { coopAct({ a: "train" }); SFX.pickup(); objectiveFlash("🦌 +1 · 무리 · herd"); } else addHerdDeer(); openShelter(); });
 }
 function herdMesh(i){
   const g = deerMesh(); g.scale.setScalar(.42);
@@ -1891,6 +2003,8 @@ function hostMsg(d){
     else if (ev.a === "nuke") { const w = wordById(ev.w); if (w && G.up.nuke) { const keep = G.loaded; G.loaded = w; G.nukeCd = 0; nukeWord(); G.loaded = keep; } }
     else if (ev.a === "note") { G.notePass.client = true; tryFinishNote(); }
     else if (ev.a === "chat") addChat("👥 파트너 · partner", String(ev.t || "").slice(0, 200));
+    else if (ev.a === "duelOk" && G.sanct) { G.sanct.duelHits.p++; if (G.duel) duelBar(); checkDuelEnd(); }
+    else if (ev.a === "zap") zapMe();
     else if (G.mode === "deer" && ["ammo", "kit", "place", "pick", "dbuild", "train", "charge", "learn"].includes(ev.a)) deerHostAction(ev);
     else if (ev.a === "free") { const h = partner.stuck; partner.stuck = null; for (const o of G.dogs) o.cd = Math.max(o.cd, 2); if (h && h !== true) { h.cd = 4; const dx = h.x - partner.pos.x, dz = h.z - partner.pos.z, dd = Math.hypot(dx, dz) || 1; world.moveEntity(h, dx / dd * 3, dz / dd * 3, .35, 0); } }
   }
@@ -2031,6 +2145,10 @@ function clientSync(dt, rdt){
       burst(new THREE.Vector3(ev.blast[0], ev.blast[1] + 1.5, ev.blast[2]), 0xffcf5c, 150, 18); G.note && (G.note.passed = false);
       objective("💥 보스 처치! 쪽지를 읽으세요 (둘 다 통과해야 해요) · Boss down — read the note 📜 (both of you must pass it)"); }
     else if (ev.chat) addChat("👥 파트너 · partner", String(ev.chat).slice(0, 200));
+    else if (ev.duel === 1) startDuelLocal();
+    else if (ev.duel === 0) finishDuelLocal();
+    else if (ev.zap) zapMe();
+    else if (ev.duelbar && G.sanct && G.duel) { G.sanct.duelHits = { me: ev.duelbar[1], p: ev.duelbar[0] }; duelBar(); }
     else if (ev.hurt) hurtFx();
     else if (ev.heal) { SFX.heal(); floater(player.pos.clone().add(new THREE.Vector3(0, .3, -1)), "+20 HP", "#6dff8a", 22); }
     else if (ev.bite) biteRemote();
@@ -2251,7 +2369,7 @@ function update(rdt){
   if (!G.running || (G.paused && !liveCoop())) return;
 
   // ---- player movement (real time, not slowed: you can still reposition while the backpack is open? no — frozen) ----
-  if (!G.backpackOpen && !G.noteOpen && !player.downed && !G.paused) {   // no walking while a panel is open or you're down
+  if (!G.backpackOpen && !G.noteOpen && !player.downed && !G.paused && !G.duel) {   // no walking while a panel is open, you're down or in the boss duel
     const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw)), r = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
     const want = new THREE.Vector3();
     if (keys.KeyW) want.add(f); if (keys.KeyS) want.sub(f); if (keys.KeyD) want.add(r); if (keys.KeyA) want.sub(r);
@@ -2278,7 +2396,7 @@ function update(rdt){
   flash.material.opacity = Math.max(0, flash.material.opacity - rdt * 14); gunLight.intensity = Math.max(0, gunLight.intensity - rdt * 60);
   if (G.fireCd > 0) G.fireCd -= rdt;
   if (G.reloadT > 0) { G.reloadT -= rdt; if (G.reloadT <= 0) { G.rounds = G.maxRounds; renderAmmo(); } }
-  if (G.firing && G.fireCd <= 0 && G.rounds > 0 && !G.backpackOpen) fire();
+  if (G.firing && G.fireCd <= 0 && G.rounds > 0 && !G.backpackOpen && !G.duel) fire();
 
   // ---- tutorial triggers ----
   if (G.tut) {
@@ -2348,4 +2466,4 @@ function frame(){
 drawGunScreen();
 requestAnimationFrame(frame);
 window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
-window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, openBrief, addHerdDeer, charge, hitGate, sanct: () => G.sanct, deerWave, deerUse, deerInteract, deerAct, placeTrap, ammoQuiz, trapQuiz, openDemon, closeDemon, learnDeerWord, spawnDeerBoss, lessonOptions, renderMissions, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
+window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, openBrief, addHerdDeer, charge, hitGate, beginDuel, startDuelLocal, duelFire, zapMe, get duel(){ return G.duel; }, sanct: () => G.sanct, deerWave, deerUse, deerInteract, deerAct, placeTrap, ammoQuiz, trapQuiz, openDemon, closeDemon, learnDeerWord, spawnDeerBoss, lessonOptions, renderMissions, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
