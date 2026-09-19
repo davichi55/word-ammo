@@ -1292,7 +1292,9 @@ const trapSlots = () => 2 + (has("slot3") ? 1 : 0) + (has("slot4") ? 1 : 0) + (h
 // pace the same way. Each stage raises the herd limit; the hive's shield only drops at stage 8.
 const targetWords = () => Math.max(10, Math.min(G.pool.length, 120));
 const deerStage = () => Math.min(10, Math.floor(G.unlocked.length / (targetWords() / 10)));
-const herdCap = () => 6 + 6 * deerStage();
+// the deer army scales with the word list (100 words = the reference): 20 words ≈ a fifth of the herd, gate, camps
+const armyScale = () => Math.max(.2, Math.min(1.2, targetWords() / 100));
+const herdCap = () => Math.max(3, Math.round((6 + 6 * deerStage()) * armyScale()));
 const SHIELD_STAGE = 8;
 const gateShielded = () => deerStage() < SHIELD_STAGE;
 const armySize = () => { const S = G.sanct; return S.herd.length + (isClient() ? (S.runnerMeshes || []).length : S.runners.length); };
@@ -1317,9 +1319,10 @@ function deerStart(client = false){   // client = the co-op partner: same scene,
   const tag = (text, sub, x, y, z, sc = 1) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: signTexture(text, sub), transparent: true, depthWrite: false })); s.position.set(x, y, z); s.scale.set(1.8 * sc, .9 * sc, 1); scene.add(s); return s; };
   S.signs = [tag("🦌 E", "수업 · lessons", W.deer.x, W.deer.y + 4.6, W.deer.z), tag("💎 E", "탄약 · ammo", W.pedestal.x, W.pedestal.y + 3.6, W.pedestal.z), tag("🔧 E", "함정 · traps", W.workshop.x, W.workshop.y + 5.2, W.workshop.z), tag("🦌 E", "목장 · shelter", W.shelter.x, W.shelter.y + 6.4, W.shelter.z - 4)];
   // the attack lane: a herd that gathers at the shelter, and the hive's gate
-  Object.assign(S, { herd: [], runners: [], gateHp: 40, gateMax: 40, turretCd: 0, hiveBroken: false });
+  const gate = Math.max(8, Math.round(40 * armyScale()));
+  Object.assign(S, { herd: [], runners: [], gateHp: gate, gateMax: gate, turretCd: 0, hiveBroken: false });
   W.hive.membrane.opacity = .55; W.hive.gate.rotation.x = 0; W.hive.gate.position.y = 0;
-  S.gateSign = tag("🚪 40/40", "외계인 둥지 · hive gate", W.hive.x, 9.5, W.hive.z - .5, 1.8); S.signs.push(S.gateSign);
+  S.gateSign = tag(`🚪 ${gate}/${gate}`, "외계인 둥지 · hive gate", W.hive.x, 9.5, W.hive.z - .5, 1.8); S.signs.push(S.gateSign);
   // a pink pillar over the hive: the goal, visible from the sanctuary
   S.hiveBeam = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 80, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff4fd8, transparent: true, opacity: .16, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
   S.hiveBeam.position.set(W.hive.x, 40, W.hive.z + 3); scene.add(S.hiveBeam); S.signs.push(S.hiveBeam);
@@ -1768,6 +1771,7 @@ function renderShelter(){   // no explanations: the numbers + watching the herd 
 const CAMPS = [[3, 10, 60], [4, 22, 120], [5, 34, 200]];   // [gold-road waypoint, defenders, 💰 reward] — about what the herd holds at stages 1, 3, 5
 const MARCH_EVERY = 30;
 function makeCamp(wp, n, gold){
+  n = Math.max(2, Math.round(n * armyScale()));   // camp size follows the word list too
   const p = world.road2[wp], q = world.road2[wp + 1], ang = Math.atan2(q.x - p.x, q.z - p.z), side = { x: Math.cos(ang) * 6, z: -Math.sin(ang) * 6 };
   const g = new THREE.Group(); g.position.set(p.x, p.y, p.z); scene.add(g);
   const cloth = new THREE.MeshStandardMaterial({ color: 0x4a2a5a, roughness: .8, flatShading: true });
@@ -1848,7 +1852,8 @@ function runnersTick(dt){
     let best = null, bd = 28;
     for (const r of S.runners) { if (r.done || r.back || r.delay > 0) continue; const d = Math.hypot(r.x - T.x, r.z - T.z); if (d < bd) { bd = d; best = r; } }
     // a hit deer isn't lost: it turns around and runs home to the herd (sending early only costs time)
-    if (best) { S.turretCd = 1; const at = best.g.position.clone().setY(best.g.position.y + .6);
+    if (best) { S.turretCd = 1 / armyScale();   // a small word list = a slower spire
+      const at = best.g.position.clone().setY(best.g.position.y + .6);
       tracer(new THREE.Vector3(T.x, T.y, T.z), at, 0xff4fd8); burst(at, 0xff4fd8, 22, 5); fxOut({ b: [at.x, at.y, at.z, 0xff4fd8] });
       best.back = true; best.wp = Math.min(best.wp, R.length - 1) - 1; }
     else S.turretCd = .2;
