@@ -22,7 +22,7 @@ const shirtMode = () => G.mode === "escape" || G.mode === "fortress" || G.mode =
 // the words on keys 1–9 (every word you own)
 const ammoWords = () => G.unlocked || [];
 const CAT = Object.fromEntries(D.categories.map(c => [c.id, c]));
-const POS_KO = { noun: "명사", verb: "동사", adjective: "형용사", adverb: "부사", other: "기타" };
+const POS_KO = { noun: "명사", verb: "동사", adjective: "형용사", adverb: "부사", other: "표현" };   // 표현 = an expression / phrase (most "other" entries are several words)
 
 /* ================================ settings / progress ================================ */
 const settings = Object.assign({ lang: store.get("k5a_lang_wa", "en"), labels: "ko", bpMode: "type", subs: "type", sens: 1, vol: .8,
@@ -407,7 +407,7 @@ function closeBackpack(relock = true){
   if (relock && G.running && !G.paused && !G.over) lock();
 }
 // The backpack GROWS during a run so you learn the words before you need to know how they're sorted:
-//   stage 1 = ONE list grouped under 명사/동사/형용사/부사/기타 headers (jump bar on top),
+//   stage 1 = ONE list grouped under 명사/동사/형용사/부사/표현 headers (jump bar on top),
 //   stage 2 = tabs by meaning category (after 15 kills), still grouped by word type inside a tab.
 // Only ever one sorting system at a time. settings.bpMode "type"/"cat" skips ahead for players who know the words.
 const STAGE_AT = { 2: 15 };
@@ -764,7 +764,7 @@ function openNote(){
 }
 /* ---- the quiz: new word → meaning, new word → type, then earlier words (meaning → Korean). Perfect round to pass. ---- */
 let Q = null;
-const POS_LIST = ["명사", "동사", "형용사", "부사", "기타"];
+const POS_LIST = ["명사", "동사", "형용사", "부사", "표현"];
 const shuffleA = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 function distinct(list, n, key, avoid){
   const out = [], seen = new Set(avoid.map(key));
@@ -778,7 +778,7 @@ function buildQuiz(){
   if (wrongMeans.length < 3) wrongMeans = wrongMeans.concat(distinct(G.pool, 3 - wrongMeans.length, meaning, [w, ...wrongMeans]));
   const qs = [
     { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrongMeans.map(meaning)]), ans: meaning(w) },
-    { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "기타" },
+    { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" },
   ];
   // earlier words: struggled-with ones first; shown in YOUR language, answer in Korean
   const weight = x => { const s = stats[x.id]; return (s ? 1 + s.w - s.r * .3 : 1) + Math.random(); };
@@ -1060,12 +1060,15 @@ function closePanel(){ G.noteOpen = false; G.panel = null; G.timeScale = 1; Q = 
   setTimeout(() => { if (document.pointerLockElement !== renderer.domElement && G.running && !G.paused && !G.over && !G.noteOpen && !G.backpackOpen) $("#clickToPlay").hidden = false; }, 200); }
 const justClosed = () => performance.now() - (G.panelClosedAt || 0) < 600;
 function knownQuestion(w0, kinds = ["mean", "kr", "pos"]){   // one question about a word you own (w0, or a random one)
-  const known = G.unlocked, w = w0 || pick(known), kind = pick(kinds);
+  const known = G.unlocked, w = w0 || pick(known);
+  let kind = pick(kinds);
+  // a word-type question only makes sense for a single word: expressions made of several words get "which Korean?" instead
+  if (kind === "pos" && /\s/.test(w.kr.trim())) kind = "kr";
   if (kind === "mean") { const wrong = distinct(G.pool.filter(x => x.pos === w.pos), 3, meaning, [w]); while (wrong.length < 3) wrong.push(...distinct(G.pool, 3 - wrong.length, meaning, [w, ...wrong]));
     return { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }; }
   if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
     return { w, prompt: `<b>${esc(meaning(w))}</b> — 한국어로? <small>Which Korean word?</small>`, opts: shuffleA([w.kr, ...wrong.map(x => x.kr)]), ans: w.kr, audioAfter: true }; }
-  return { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "기타" };
+  return { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" };
 }
 function towerQuiz(pad){
   openPanel("towerquiz", "🔨 탑 짓기 퀴즈 · Build quiz");
@@ -1076,7 +1079,7 @@ function towerQuiz(pad){
       qs.push({ w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }); }
     else if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
       qs.push({ w, prompt: `<b>${esc(meaning(w))}</b> — 한국어로? <small>Which Korean word?</small>`, opts: shuffleA([w.kr, ...wrong.map(x => x.kr)]), ans: w.kr, audioAfter: true }); }
-    else qs.push({ w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "기타" });
+    else qs.push({ w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" });
   }
   Q = { qs, i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel();
     if (isClient()) { coopAct({ a: "build", i: fort.pads.indexOf(pad), w: (G.loaded || G.unlocked[0]).id }); objectiveFlash("🗼 탑 완성! · Tower built"); return; }
