@@ -1578,10 +1578,11 @@ function buildArena(){
     const p = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 1, 1.2, 24), stone); p.position.set(x, DUEL.y - .6, DUEL.z); g.add(p);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(2.4, .07, 8, 40), new THREE.MeshBasicMaterial({ color: 0x7ce8ff })); ring.rotation.x = Math.PI / 2; ring.position.set(x, DUEL.y + .02, DUEL.z); g.add(ring);
   }
-  const boss = new Alien(g, new THREE.Vector3(25, DUEL.y - 4, DUEL.bossZ), G.unlocked[0], { special: true, shirt: "👑", hp: 1e9 });
-  boss.root.scale.setScalar(4.6); boss.root.rotation.y = Math.PI;
-  const board = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: textTex("…", ""), transparent: true, toneMapped: false })); board.position.set(25, DUEL.y + 7.5, DUEL.bossZ - 9); board.rotation.y = Math.PI; g.add(board);
-  const bar = new THREE.Mesh(new THREE.PlaneGeometry(10, .9), new THREE.MeshBasicMaterial({ map: textTex("👑", "", 1024, 96), transparent: true, toneMapped: false })); bar.position.set(25, DUEL.y + 5.3, DUEL.bossZ - 9); bar.rotation.y = Math.PI; g.add(bar);
+  const boss = new Alien(g, new THREE.Vector3(25, DUEL.y + 9.8, DUEL.bossZ), G.unlocked[0], { special: true, shirt: "👑", hp: 1e9 });
+  boss.root.scale.setScalar(4.6); boss.root.rotation.y = Math.PI;   // floats ABOVE the board, not behind the answers
+  boss.root.traverse(o => { if (o.isSprite) o.material.opacity = Math.min(o.material.opacity, .1); });   // a softer golden glow
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(14, 3.5), new THREE.MeshBasicMaterial({ map: textTex("…", ""), transparent: true, toneMapped: false })); board.position.set(25, DUEL.y + 7, DUEL.bossZ - 9); board.rotation.y = Math.PI; g.add(board);
+  const bar = new THREE.Mesh(new THREE.PlaneGeometry(10, .9), new THREE.MeshBasicMaterial({ map: textTex("👑", "", 1024, 96), transparent: true, toneMapped: false })); bar.position.set(25, DUEL.y + 9.3, DUEL.bossZ - 9); bar.rotation.y = Math.PI; g.add(bar);
   return (S.arena = { g, boss, board, bar, targets: [] });
 }
 function duelQuestions(){
