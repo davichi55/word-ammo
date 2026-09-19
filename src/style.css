@@ -243,3 +243,6 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #note .shel .road span{background:#2a1d0c;color:#f8ecd0;border-radius:8px;padding:3px 9px}
 #note .shel .road span.ok{background:#2e8f5a}
 #note .shel .road span.won{background:#3f7fb8}
+
+#buildTag{position:fixed;left:6px;bottom:4px;z-index:9999;font:11px/1.2 system-ui,sans-serif;color:rgba(255,255,255,.45);pointer-events:none;user-select:none}
+#buildTag.new{pointer-events:auto;cursor:pointer;color:#fff;background:#1d9c7a;padding:5px 9px;border-radius:6px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.4)}

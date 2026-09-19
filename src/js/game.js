@@ -6,11 +6,11 @@ import { EffectComposer } from "../../node_modules/three/examples/jsm/postproces
 import { RenderPass } from "../../node_modules/three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "../../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "../../node_modules/three/examples/jsm/postprocessing/OutputPass.js";
-import { buildWorld } from "./world.js";
-import { buildSanctuaryWorld } from "./sanctuary-world.js";
-import { Alien, Orb, glowTexture } from "./enemies.js";
-import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js";
-import { Net } from "./coop.js";
+import { buildWorld } from "./world.js?v=202609200244";
+import { buildSanctuaryWorld } from "./sanctuary-world.js?v=202609200244";
+import { Alien, Orb, glowTexture } from "./enemies.js?v=202609200244";
+import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js?v=202609200244";
+import { Net } from "./coop.js?v=202609200244";
 
 const D = window.WORD_DATA;
 const $ = s => document.querySelector(s);
@@ -2631,3 +2631,14 @@ drawGunScreen();
 requestAnimationFrame(frame);
 window.__step = (sec) => { const n = Math.round(sec * 60); for (let i = 0; i < n; i++) update(1 / 60); composer.render(); };   // for automated testing
 window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz, onKill, openBrief, addHerdDeer, charge, hitGate, beginDuel, startDuelLocal, duelFire, zapMe, get duel(){ return G.duel; }, sanct: () => G.sanct, deerWave, deerUse, deerInteract, deerAct, placeTrap, ammoQuiz, trapQuiz, openDemon, closeDemon, learnDeerWord, spawnDeerBoss, lessonOptions, renderMissions, useWorld, partner, hostSnapshot, hostFort, applyFort, spawnPickup, biteQuiz, hitHound, spawnEvent, useEvent, fort, towerQuiz, buildTower, openShop, buy, bossKill, setupZone, spawnAlienShirt, specialKill, closeNote, unlockWord, populateDistrict, startGame, openBackpack, closeBackpack, loadWord, fire, announce, tutNext, player, camera, spawnAlien, D };
+
+// ---- build tag (bottom-left): on the website, check every few minutes whether a newer build is out ----
+(function checkBuild(){
+  const tag = document.getElementById("buildTag"); if (!tag || location.protocol !== "https:") return;
+  const mine = tag.textContent.trim();
+  const look = () => fetch("index.html?t=" + Date.now(), { cache: "no-store" }).then(r => r.text()).then(h => {
+    const m = h.match(/id="buildTag"[^>]*>([^<]*)</); if (!m || m[1].trim() === mine) return;
+    tag.textContent = "🔄 새 버전 · New version — click to reload"; tag.classList.add("new"); tag.onclick = () => location.reload();
+  }).catch(() => {});
+  setTimeout(look, 5000); setInterval(look, 5 * 60 * 1000);
+})();
