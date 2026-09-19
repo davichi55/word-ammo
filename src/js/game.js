@@ -467,13 +467,14 @@ document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === renderer.domElement;
   if (locked && G.panel === "demon") { document.exitPointerLock(); return; }   // a late lock during a deer lesson: let it go again
   // Esc while the mouse is captured releases it without a keydown: treat losing the lock as pause (not right after a deer lesson)
-  if (!locked && G.running && !G.paused && !G.over && !G.backpackOpen && !G.noteOpen && G.wasLocked && !justClosed() && performance.now() > (G.noPauseUntil || 0)) pauseGame();
+  if (!locked && G.running && !G.paused && !G.over && !G.backpackOpen && !G.noteOpen && !G.chatting && G.wasLocked && !justClosed() && performance.now() > (G.noPauseUntil || 0)) pauseGame();   // (opening the chat is not a pause)
   G.wasLocked = locked;
-  $("#clickToPlay").hidden = locked || !G.running || G.paused || G.over || G.backpackOpen;
+  $("#clickToPlay").hidden = locked || !G.running || G.paused || G.over || G.backpackOpen || G.chatting || G.noteOpen;
 });
 $("#clickToPlay").onclick = () => { initAudio(); lock(); };
 renderer.domElement.addEventListener("mousedown", e => {
   if (!G.running || G.paused || G.over) return;
+  if (G.chatting) { $("#chatInput").focus(); return; }   // clicking while chatting = back into the chat box
   if (document.pointerLockElement !== renderer.domElement) { lock(); return; }
   if (G.duel) { if (e.button === 0) duelFire(); return; }   // 👑 the boss duel: shoot an answer
   if (G.aiming) { if (e.button === 0) confirmAim(); return; }   // 🎯 aiming a catapult
@@ -486,7 +487,8 @@ addEventListener("mousemove", e => {
   player.yaw -= e.movementX * s; player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * s));
 });
 addEventListener("keydown", e => {
-  if (!G.running || G.over || G.chatting) return;
+  if (!G.running || G.over) return;
+  if (G.chatting) { if (e.code === "Escape") closeChat(); else if (e.code === "Enter" || e.code === "Tab") { e.preventDefault(); $("#chatInput").focus(); } return; }   // the box lost focus: Esc still closes, Enter/Tab refocus
   const k = e.code;
   if (k === "Enter" && G.coop && !G.noteOpen && !G.backpackOpen) { e.preventDefault(); openChat(); return; }   // 💬 co-op chat
   if (G.aiming && !G.noteOpen) { if (k === "KeyE" || k === "Digit1") { confirmAim(); return; } if (k === "Digit2") { aimPickup(); return; } if (k === "KeyQ" || k === "Escape") { G.aiming = null; return; } }
@@ -2061,7 +2063,9 @@ function openChat(){
   G.chatting = true; for (const k in keys) keys[k] = false; G.firing = false;
   $("#chatBox").hidden = false; $("#chatInput").value = ""; document.exitPointerLock && document.exitPointerLock(); setTimeout(() => $("#chatInput").focus(), 0);
 }
-function closeChat(){ G.chatting = false; $("#chatBox").hidden = true; $("#chatInput").blur(); G.panelClosedAt = performance.now(); if (G.running && !G.noteOpen) $("#clickToPlay").hidden = false; }
+function closeChat(){ G.chatting = false; $("#chatBox").hidden = true; $("#chatInput").blur(); G.panelClosedAt = performance.now();
+  if (G.running && !G.noteOpen) { lock(); setTimeout(() => { if (G.running && !G.chatting && !G.noteOpen && !G.paused && document.pointerLockElement !== renderer.domElement) $("#clickToPlay").hidden = false; }, 350); }   // Enter is a real key press: take the mouse back right away
+}
 $("#chatInput").addEventListener("keydown", e => {
   e.stopPropagation();
   if (e.key === "Escape") { closeChat(); return; }
@@ -2585,6 +2589,7 @@ function update(rdt){
     if (f.life <= 0) f.el.remove();
   }
   G.floaters = G.floaters.filter(f => f.life > 0);
+  if (document.pointerLockElement === renderer.domElement && !$("#clickToPlay").hidden) $("#clickToPlay").hidden = true;   // never stuck on screen while you play
   if (helperHide > 0) { helperHide -= rdt; if (helperHide <= 0) $("#helper").hidden = true; }
   renderTop();
 }
