@@ -1275,6 +1275,10 @@ const trapSlots = () => 2 + (has("slot3") ? 1 : 0) + (has("slot4") ? 1 : 0) + (h
 const deerSize = () => Math.min(2.4, .55 + .045 * G.unlocked.length);
 const shortWord = w => w.kr.replace(/\s/g, "").length <= 7 && !/[?!_~…]/.test(w.kr);   // fits a 퇴마사 sticker
 const bossHpFor = wave => Math.round(200 * Math.pow(1.45, wave - 1));
+// every wave the aliens get tougher AND faster, so the towers / tech have to keep up
+const ammoPerQuiz = () => Math.round(SANCT.ammoQuiz * Math.pow(1.12, G.wave - 1) * (has("battery") ? 1.5 : 1));   // grows with the waves (+12 %)
+const alienHp = wave => Math.round(100 * Math.pow(1.15, wave - 1));                   // 100, 115, 132 … 352 at wave 10
+const alienSpeed = wave => Math.min(3.4, rnd(1.5, 1.9) * Math.pow(1.05, wave - 1));   // +5 % a wave, max ≈ ×2
 function deerStart(){
   const W = world, S = G.sanct = { hp: SANCT.deerMax, max: SANCT.deerMax, ammo: 20, kits: 0, traps: [], tech: new Set(), learned: [], techWord: {}, growWords: [],
     nextWaveT: 0, lastHit: -99, lastWarn: -99, lastAmmoWarn: -99, missionsT: 0, bossHp: 0,
@@ -1290,6 +1294,8 @@ function deerStart(){
   S.signs = [tag("🦌 E", "수업 · lessons", W.deer.x, W.deer.y + 4.6, W.deer.z), tag("💎 E", "탄약 · ammo", W.pedestal.x, W.pedestal.y + 3.6, W.pedestal.z), tag("🔧 E", "함정 · traps", W.workshop.x, W.workshop.y + 5.2, W.workshop.z)];
   S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.36), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
   S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(2, 2, 1); S.crystal.add(S.crystalGlow);
+  S.trapBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
+  S.trapBeam.position.set(W.workshop.x, W.workshop.y + 30, W.workshop.z); S.trapBeam.visible = false; scene.add(S.trapBeam);
   for (const [x, z] of W.pads.slice(0, 4)) addPad(x, z);
   deerWave();
 }
@@ -1337,7 +1343,7 @@ function deerQuiz(kind, head, qs, onPass){
 // ---- pedestal: ammo ----
 function openPedestal(){ openPanel("pedestal", "💎 수정 받침대 · Pedestal"); renderPedestal(); }
 function renderPedestal(){
-  const S = G.sanct, per = Math.round(SANCT.ammoQuiz * (has("battery") ? 1.5 : 1)), left = Math.max(0, G.waveSize - G.waveKills), need = left * Math.ceil(100 * (1 + .08 * (G.wave - 1)) / SANCT.towerDmg[towerLv()]);
+  const S = G.sanct, per = ammoPerQuiz(), left = Math.max(0, G.waveSize - G.waveKills), need = left * Math.ceil(alienHp(G.wave) / SANCT.towerDmg[towerLv()]);
   $("#noteBody").innerHTML = `<div class="qHead">💎 탄약 · Ammo: <b>${S.ammo}</b> ${S.ammo < need ? `· ⚠ ~${need} needed for ${left} aliens` : "· ✓ enough for now"}</div>
     <div class="dList">${fort.towers.map((t, i) => `<div>🗼 ${i + 1} · Lv ${towerLv() + 1} · ${t.kills || 0} kills</div>`).join("") || "<div>🔨 탑이 없어요 · no towers yet — E at a 🔨 spot</div>"}
     <div>🪤 ${S.traps.length}/${trapSlots()} traps on the road${S.kits ? ` · 📦 ${S.kits} kit${S.kits > 1 ? "s" : ""} to place` : ""} · each shot = ${SANCT.trapCost} ammo</div></div>
@@ -1346,7 +1352,7 @@ function renderPedestal(){
 function ammoQuiz(){
   const w = pickQuizWord();
   deerQuiz("ammoq", "💎 탄약 퀴즈 · Ammo quiz", twoQ(w), () => {
-    const S = G.sanct, add = Math.round(SANCT.ammoQuiz * (has("battery") ? 1.5 : 1)); S.ammo += add; SFX.pickup();
+    const S = G.sanct, add = ammoPerQuiz(); S.ammo += add; SFX.pickup();
     burst(S.crystal.position.clone(), 0xb388ff, 50, 6); objectiveFlash(`💎 +${add} 탄약 · ammo (${S.ammo})`); openPedestal(); });
 }
 // ---- workshop: traps ----
@@ -1520,7 +1526,7 @@ function deerAct(act){
 // ---- missions (top left) ----
 function renderMissions(){
   const S = G.sanct; if (!S) return;
-  const left = Math.max(0, G.waveSize - G.waveKills), perKill = Math.ceil(100 * (1 + .08 * (G.wave - 1)) / SANCT.towerDmg[towerLv()]), need = left * perKill;
+  const left = Math.max(0, G.waveSize - G.waveKills), perKill = Math.ceil(alienHp(G.wave) / SANCT.towerDmg[towerLv()]), need = left * perKill;
   const dmg = SANCT.trapDmg[trapLv()], hits = S.traps.length + S.kits, bossHp = G.bossOut ? (G.aliens.find(a => a.special && !a.dead) || { hp: S.bossHp }).hp : S.bossHp;
   const next = lessonOptions().find(o => o.tech);
   const row = (ok, html) => `<div class="${ok ? "ok" : ""}">${ok ? "✓" : "•"} ${html}</div>`;
@@ -1535,6 +1541,10 @@ function deerTick(dt, rdt){
   const S = G.sanct;
   towersTick(dt); trapsTick(dt);
   for (const p of fort.pads) p.icon.position.y = 1.6 + Math.sin(G.time * 2 + p.x) * .1;
+  // 🔧 a light over the workshop while your traps can't kill this wave's boss
+  const bossLeft = G.bossOut ? (G.aliens.find(a => a.special && !a.dead) || { hp: 0 }).hp : S.bossHp;
+  S.trapBeam.visible = (S.traps.length + S.kits) * SANCT.trapDmg[trapLv()] < bossLeft && S.traps.length + S.kits < trapSlots();
+  S.trapBeam.material.opacity = .18 + Math.sin(G.time * 3) * .07;
   S.crystal.rotation.y += rdt * 1.5; S.crystal.position.y = world.pedestal.y + 2.4 + Math.sin(G.time * 2) * .12; S.crystalGlow.material.opacity = S.ammo > 0 ? .7 : .2;
   S.deerMesh.rotation.y = Math.sin(G.time * .4) * .5; S.deerMesh.position.y = world.deer.y + .4 + Math.abs(Math.sin(G.time * 1.3)) * .05;
   // interaction prompt
@@ -1555,15 +1565,20 @@ function deerTick(dt, rdt){
   const alive = G.aliens.filter(a => !a.dead).length, cap = Math.min(30, 12 + G.wave * 2);
   G.spawnT -= dt;
   if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
-    G.spawnT = Math.max(.8, 1.6 - G.wave * .05); G.waveSpawned++;
-    const [ex, ez] = world.entries[0];
-    const a = spawnAlienShirt(new THREE.Vector3(ex + rnd(-2.5, 2.5), 0, ez + rnd(-1, 1)), nextWeakWord(), { rise: true, speed: Math.min(2.6, rnd(1.5, 1.9) + G.wave * .03), skills: { orb: false, slam: true } });
-    a.hp = a.maxHp = Math.round(100 * (1 + .08 * (G.wave - 1)));
+    G.spawnT = Math.max(.55, 1.6 - G.wave * .07);
+    // from wave 3 some aliens come as a pack of 3 at once: one tower at the gate can't take them all
+    const pack = G.wave >= 3 && Math.random() < Math.min(.45, .15 + G.wave * .03) ? 3 : 1, [ex, ez] = world.entries[0];
+    for (let i = 0; i < pack && G.waveSpawned < G.waveSize; i++) {
+      G.waveSpawned++;
+      const a = spawnAlienShirt(new THREE.Vector3(ex + (pack > 1 ? (i - 1) * 2.2 : rnd(-2.5, 2.5)), 0, ez + rnd(-1, 1) - i * .8), nextWeakWord(), { rise: true, speed: alienSpeed(G.wave), skills: { orb: false, slam: true } });
+      a.hp = a.maxHp = alienHp(G.wave);
+    }
+    if (pack > 1) G.spawnT += .8;
   }
 }
 function clearDeer(){
   const S = G.sanct;
-  if (S) { for (const t of S.traps) scene.remove(t.g); if (S.deerMesh) scene.remove(S.deerMesh); (S.signs || []).forEach(s => scene.remove(s)); if (S.crystal) scene.remove(S.crystal); }
+  if (S) { for (const t of S.traps) scene.remove(t.g); if (S.trapBeam) scene.remove(S.trapBeam); if (S.deerMesh) scene.remove(S.deerMesh); (S.signs || []).forEach(s => scene.remove(s)); if (S.crystal) scene.remove(S.crystal); }
   if (G.demon) { G.demon.f.remove(); G.demon = null; }
   G.sanct = null; G.waveWords = [];
 }
