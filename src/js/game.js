@@ -1620,7 +1620,7 @@ function deerTick(dt, rdt){
   $("#radar").hidden = !tgt || G.noteOpen;
   if (tgt) { const dx = tgt.x - player.pos.x, dz = tgt.z - player.pos.z;
     $("#radarArrow").style.transform = `rotate(${Math.atan2(dx, -dz) + player.yaw - Math.PI / 2}rad)`; $("#radarDist").textContent = Math.round(Math.hypot(dx, dz)) + " m"; $("#radar small").textContent = tgt.label; }
-  S.missionsT -= rdt; if (S.missionsT <= 0) { S.missionsT = .5; renderMissions(); }
+  S.missionsT -= rdt; if (S.missionsT <= 0) { S.missionsT = .5; renderMissions(); if (G.panel === "shelter") renderShelter(); }
   // waves (the host runs them)
   if (isClient()) return;
   if (S.nextWaveT > 0) { S.nextWaveT -= dt; if (S.nextWaveT <= 0) { if (G.noteOpen && !G.coop) S.nextWaveT = .2; else deerWave(); } return; }
@@ -1644,16 +1644,13 @@ function deerTick(dt, rdt){
 // ---- ⚔️ the attack lane: train deer at the shelter (8 questions each), gather a herd, charge the hive ----
 const techCost = () => 40 * ((G.sanct ? G.sanct.tech.size : 0) + 1);   // 40, 80, 120 … gold
 function openShelter(){ openPanel("shelter", "🦌 사슴 목장 · Deer shelter"); renderShelter(); }
-function renderShelter(){
+function renderShelter(){   // no explanations: the numbers + watching the herd march teach how it works
   const S = G.sanct, n = S.herd.length, full = armySize() >= herdCap();
-  $("#noteBody").innerHTML = `<div class="qHead">🦌 herd <b>${n}</b> / ${herdCap()} (stage ${deerStage()}/10) · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax}${gateShielded() ? " · 🛡 shielded" : ""}</div>
-    ${gateShielded() ? `<div class="dList"><div>🛡 둥지의 방패는 사슴이 ${SHIELD_STAGE}단계가 되면 사라져요 · the hive's shield drops when the deer reaches stage ${SHIELD_STAGE} (learn words). Deer that reach a shielded gate just run home.</div></div>` : ""}
-    <div class="dList"><div>⚔️ 무리는 ${MARCH_EVERY}초마다 행진해요 · the herd marches by itself every ${MARCH_EVERY} s — next in <b>${Math.ceil(S.marchT)} s</b></div>
-    <div>🏕 캠프: 수비병보다 사슴이 많으면 점령! · camps fall to a march with MORE deer than defenders (they refill every ${MARCH_EVERY} s): ${S.camps.map((c, i) => c.conquered ? `🚩 ${i + 1}` : `🏕 ${i + 1}: ${c.max} (+💰${c.gold})`).join(" · ")}</div>
-    <div>🏆 그다음 둥지: 문을 부수면 승리! · then the hive: break its gate to win (the spire sends deer home)</div>
-    <div>쓰러진 사슴은 목장으로 돌아와요 · fallen deer come back to the pen — you never lose them</div></div>
-    <div class="shop" style="margin-top:10px"><button data-act="train" ${full ? "disabled" : ""}><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions on your words${full ? " — herd full: grow the deer for more" : ""}</small><span class="c">${full ? "FULL" : "🦌 +1"}</span></button>
-    </div>`;
+  const camps = S.camps.map(c => `<span class="${c.conquered ? "won" : n > c.max ? "ok" : ""}">${c.conquered ? "🚩" : "🏕 " + c.max}</span>`).join("");
+  $("#noteBody").innerHTML = `<div class="shel">
+      <div class="herd">🦌 <b>${n}</b><small>/${herdCap()}</small></div>
+      <div class="road">⚔️ <b>${Math.ceil(S.marchT)}s</b> ${camps}<span>${S.hiveBroken ? "🏆" : gateShielded() ? "🛡" : "🚪 " + S.gateHp}</span></div></div>
+    <div class="shop"><button data-act="train" ${full ? "disabled" : ""}><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions</small><span class="c">${full ? "FULL" : "🦌 +1"}</span></button></div>`;
 }
 const CAMPS = [[3, 10, 60], [4, 22, 120], [5, 34, 200]];   // [gold-road waypoint, defenders, 💰 reward] — about what the herd holds at stages 1, 3, 5
 const MARCH_EVERY = 30;

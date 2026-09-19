@@ -234,3 +234,11 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #chatBox{position:fixed;left:14px;bottom:82px;z-index:6;width:min(460px,70vw)}
 #chatInput{width:100%;font:inherit;font-size:15px;padding:8px 12px;border-radius:10px;border:2px solid #7cf7d4;background:rgba(8,16,30,.92);color:#fff;outline:none}
 #missions .mGoal{font-weight:800;color:#ffcf5c;margin-bottom:3px;border-bottom:1px solid rgba(255,207,92,.3);padding-bottom:3px}
+/* 🦌 shelter panel: numbers, not text */
+#note .shel{display:flex;align-items:center;gap:16px;margin:4px 0 12px}
+#note .shel .herd{font-size:42px;font-weight:900;color:#2a1d0c;white-space:nowrap}
+#note .shel .herd small{font-size:20px;color:#8a6a3a;font-weight:700}
+#note .shel .road{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:17px;color:#5a2d0a}
+#note .shel .road span{background:#2a1d0c;color:#f8ecd0;border-radius:8px;padding:3px 9px}
+#note .shel .road span.ok{background:#2e8f5a}
+#note .shel .road span.won{background:#3f7fb8}
