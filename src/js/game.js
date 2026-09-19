@@ -1893,11 +1893,13 @@ function renderShelter(){   // no explanations: the numbers + watching the herd 
   const camps = S.camps.map(c => `<span class="${c.conquered ? "won" : n > c.max ? "ok" : ""}">${c.conquered ? "🚩" : "🏕 " + c.max}</span>`).join("");
   $("#noteBody").innerHTML = `<div class="shel">
       <div class="herd">🦌 <b>${n}</b><small>/${herdCap()}</small></div>
-      <div class="road">⚔️ <b>${Math.ceil(S.marchT)}s</b> ${camps}<span>${S.hiveBroken ? "🏆" : gateShielded() ? "🛡" : "🚪 " + S.gateHp}</span></div></div>
+      <div class="road">⚔️ <b>${Math.ceil(S.marchT)}s</b> ${camps}<span>${S.hiveBroken ? "🏆" : gateShielded() ? "🛡" : "🚪 " + S.gateHp}</span><span>💎 +${DEER_LOOT}/🦌</span></div></div>
     <div class="shop"><button data-act="train" ${full ? "disabled" : ""}><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>4 questions</small><span class="c">${full ? "FULL" : "🦌 +1"}</span></button></div>`;
 }
 const CAMPS = [[3, 10, 60], [4, 22, 120], [5, 34, 200]];   // [gold-road waypoint, defenders, 💰 reward] — about what the herd holds at stages 1, 3, 5
 const MARCH_EVERY = 30;
+const DEER_LOOT = 20;   // 💎 every deer that reaches an enemy brings back ammo for the towers
+function deerLoot(x, y, z){ const S = G.sanct; S.ammo += DEER_LOOT; floater(new THREE.Vector3(x, y + 2.2, z), `+${DEER_LOOT} 💎`, "#c9a2ff", 22, 1); }
 function makeCamp(wp, n, gold){
   n = Math.max(2, Math.round(n * armyScale()));   // camp size follows the word list too
   const p = world.road2[wp], q = world.road2[wp + 1], ang = Math.atan2(q.x - p.x, q.z - p.z), side = { x: Math.cos(ang) * 6, z: -Math.sin(ang) * 6 };
@@ -1925,7 +1927,7 @@ function campVisual(c){
   c.flagMat.color.setHex(c.conquered ? 0x9fdcff : 0xff4fd8);
 }
 function campFight(c, r){   // one deer and one defender fall; the deer comes back in the pen (it marches again next time)
-  const S = G.sanct; c.alive--; r.done = true; r.home = true;
+  const S = G.sanct; c.alive--; r.done = true; r.home = true; deerLoot(r.x, r.g.position.y, r.z);
   const at = new THREE.Vector3(r.x, r.g.position.y + 1, r.z); burst(at, 0xff7de0, 18, 5); burst(at, 0x9fdcff, 12, 4); fxOut({ b: [at.x, at.y, at.z, 0xff7de0] });
   if (c.alive > 0) { campVisual(c); return; }
   c.conquered = true; campVisual(c); G.coins += c.gold; SFX.pickup(); SFX.kill();
@@ -1970,8 +1972,8 @@ function runnersTick(dt){
       if (r.back) { r.wp--; if (r.wp < 0) { r.done = true; r.home = true; continue; } }   // made it home: back into the herd
       else { const camp = S.camps.find(c => c.wp === r.wp && !c.conquered && c.alive > 0); if (camp) { campFight(camp, r); continue; }   // 🏕 a camp in the way: fight
         r.wp++; if (r.wp >= R.length) {
-        if (gateShielded()) { r.back = true; r.wp = R.length - 2; burst(new THREE.Vector3(r.x, r.g.position.y + 1, r.z), 0x7ce8ff, 16, 5); continue; }   // 🛡 bounces off, runs home
-        hitGate(); r.done = true; r.home = true; continue; } } }   // it hits the gate once and comes home
+        if (gateShielded()) { r.back = true; r.wp = R.length - 2; burst(new THREE.Vector3(r.x, r.g.position.y + 1, r.z), 0x7ce8ff, 16, 5); deerLoot(r.x, r.g.position.y, r.z); continue; }   // 🛡 bounces off, runs home
+        hitGate(); deerLoot(r.x, r.g.position.y, r.z); r.done = true; r.home = true; continue; } } }   // it hits the gate once and comes home
     else { r.x += dx / d * sp; r.z += dz / d * sp; r.g.rotation.y = Math.atan2(dx, dz); }
     r.g.position.set(r.x, world.groundY(r.x, r.z) + Math.abs(Math.sin(G.time * 14 + r.x)) * .25, r.z);
   }
