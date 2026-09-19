@@ -1826,7 +1826,7 @@ function marchTick(dt){   // every 30 s: the camps refill, and the whole herd ma
   const S = G.sanct; S.marchT -= dt; if (S.marchT > 0) return;
   S.marchT = MARCH_EVERY;
   for (const c of S.camps) if (!c.conquered) { c.alive = c.max; campVisual(c); }
-  if (S.herd.length) { const n = S.herd.length; charge(true); objectiveFlash(`⚔️ 행진! · ${n} deer march down the gold road`); }
+  if (S.herd.length) charge(true);   // silent: the march countdown is in the missions box
 }
 function trainQuiz(){
   const qs = [], used = new Set();
