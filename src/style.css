@@ -233,3 +233,4 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 #chatLog div.old{opacity:0}
 #chatBox{position:fixed;left:14px;bottom:82px;z-index:6;width:min(460px,70vw)}
 #chatInput{width:100%;font:inherit;font-size:15px;padding:8px 12px;border-radius:10px;border:2px solid #7cf7d4;background:rgba(8,16,30,.92);color:#fff;outline:none}
+#missions .mGoal{font-weight:800;color:#ffcf5c;margin-bottom:3px;border-bottom:1px solid rgba(255,207,92,.3);padding-bottom:3px}

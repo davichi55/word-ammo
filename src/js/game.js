@@ -1303,6 +1303,9 @@ function deerStart(client = false){   // client = the co-op partner: same scene,
   Object.assign(S, { herd: [], runners: [], gateHp: 40, gateMax: 40, turretCd: 0, hiveBroken: false });
   W.hive.membrane.opacity = .55; W.hive.gate.rotation.x = 0; W.hive.gate.position.y = 0;
   S.gateSign = tag("🚪 40/40", "외계인 둥지 · hive gate", W.hive.x, 9.5, W.hive.z - .5, 1.8); S.signs.push(S.gateSign);
+  // a pink pillar over the hive: the goal, visible from the sanctuary
+  S.hiveBeam = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 80, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff4fd8, transparent: true, opacity: .16, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
+  S.hiveBeam.position.set(W.hive.x, 40, W.hive.z + 3); scene.add(S.hiveBeam); S.signs.push(S.hiveBeam);
   S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.36), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
   S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(2, 2, 1); S.crystal.add(S.crystalGlow);
   S.trapBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
@@ -1559,12 +1562,13 @@ function renderMissions(){
   const dmg = SANCT.trapDmg[trapLv()], hits = S.traps.length + S.kits, bossHp = bossLiveHp();
   const next = lessonOptions().find(o => o.tech);
   const row = (ok, html) => `<div class="${ok ? "ok" : ""}">${ok ? "✓" : "•"} ${html}</div>`;
-  $("#missions").innerHTML = `<div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words</div>
+  $("#missions").innerHTML = `<div class="mGoal">🏆 목표 · GOAL: 둥지의 문을 부숴요 · break the alien hive's gate 🚪 ${S.gateHp}/${S.gateMax} <small>(🦌 shelter → charge)</small></div>
+    <div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words <small>— don't let it fall</small></div>
     ${row(fort.towers.length >= fort.towers.length + fort.pads.length, `🗼 탑 짓기 · build towers <b>${fort.towers.length}/${fort.towers.length + fort.pads.length}</b> <small>(🔨 E)</small>`)}
     ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
     ${row(hits * dmg >= bossHp, `🪤 보스 · boss ❤ <b>${bossHp}</b> — traps ${hits} × ${dmg} = ${hits * dmg}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
     ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b> · 💰 ${G.coins}/${techCost()}`) : ""}
-    ${row(S.hiveBroken, `⚔️ 공격 · attack: herd <b>${S.herd.length}</b>${S.runners.length ? ` (+${S.runners.length} charging)` : ""} · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax} <small>(shelter)</small>`)}
+    ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} <small>(8 questions each)</small>`)}
     <div class="mFoot">Tab 🎒 내 단어 · your words</div>`;
 }
 function deerTick(dt, rdt){
@@ -1614,8 +1618,9 @@ function openShelter(){ openPanel("shelter", "🦌 사슴 목장 · Deer shelter
 function renderShelter(){
   const S = G.sanct, n = S.herd.length;
   $("#noteBody").innerHTML = `<div class="qHead">🦌 herd <b>${n}</b> · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax}</div>
-    <div class="dList"><div>둥지의 탑이 가까이 온 사슴을 쏴요 (약 1초에 1마리) · the hive's spire shoots deer near the hive, about 1 per second — a big herd loses a smaller share</div>
-    <div>문에 닿은 사슴 1마리 = −1 · every deer that reaches the gate: −1. Break the gate to win!</div></div>
+    <div class="dList"><div>🏆 목표: 둥지의 문을 부수면 승리! · GOAL: break the hive gate to win</div>
+    <div>둥지의 탑이 사슴을 맞히면 목장으로 돌아와요 (약 1초에 1마리) · the spire hits about 1 deer per second — a hit deer runs back to the herd, so only a big herd gets many through</div>
+    <div>문에 닿은 사슴 1마리 = −1 · every deer that reaches the gate: −1 (it stays there)</div></div>
     <div class="shop" style="margin-top:10px"><button data-act="train"><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions on your words</small><span class="c">🦌 +1</span></button>
     <button data-act="charge" ${n ? "" : "disabled"}><span class="k">2</span><b>돌격! · Charge!</b> <small>send the whole herd down the gold road</small><span class="c">🦌 ×${n}</span></button></div>`;
 }
@@ -1645,20 +1650,24 @@ function runnersTick(dt){
   S.turretCd -= dt;
   for (const r of S.runners) {
     if (r.delay > 0) { r.delay -= dt; continue; }
-    const p = R[Math.min(r.wp, R.length - 1)], dx = p.x - r.x, dz = p.z - r.z, d = Math.hypot(dx, dz), sp = 7 * dt;
-    if (d < sp + .3) { r.wp++; if (r.wp >= R.length) { hitGate(); r.done = true; continue; } }
+    const p = R[Math.max(0, Math.min(r.wp, R.length - 1))], dx = p.x - r.x, dz = p.z - r.z, d = Math.hypot(dx, dz), sp = (r.back ? 5 : 7) * dt;
+    if (d < sp + .3) {
+      if (r.back) { r.wp--; if (r.wp < 0) { r.done = true; r.home = true; continue; } }   // made it home: back into the herd
+      else { r.wp++; if (r.wp >= R.length) { hitGate(); r.done = true; continue; } } }
     else { r.x += dx / d * sp; r.z += dz / d * sp; r.g.rotation.y = Math.atan2(dx, dz); }
     r.g.position.set(r.x, world.groundY(r.x, r.z) + Math.abs(Math.sin(G.time * 14 + r.x)) * .25, r.z);
   }
   // the spire spits at the nearest running deer within 28 m
   if (S.turretCd <= 0) {
     let best = null, bd = 28;
-    for (const r of S.runners) { if (r.done || r.delay > 0) continue; const d = Math.hypot(r.x - T.x, r.z - T.z); if (d < bd) { bd = d; best = r; } }
+    for (const r of S.runners) { if (r.done || r.back || r.delay > 0) continue; const d = Math.hypot(r.x - T.x, r.z - T.z); if (d < bd) { bd = d; best = r; } }
+    // a hit deer isn't lost: it turns around and runs home to the herd (sending early only costs time)
     if (best) { S.turretCd = 1; const at = best.g.position.clone().setY(best.g.position.y + .6);
-      tracer(new THREE.Vector3(T.x, T.y, T.z), at, 0xff4fd8, true); burst(at, 0xff4fd8, 22, 5); best.done = true; }
+      tracer(new THREE.Vector3(T.x, T.y, T.z), at, 0xff4fd8); burst(at, 0xff4fd8, 22, 5); fxOut({ b: [at.x, at.y, at.z, 0xff4fd8] });
+      best.back = true; best.wp = Math.min(best.wp, R.length - 1) - 1; }
     else S.turretCd = .2;
   }
-  for (const r of S.runners) if (r.done) scene.remove(r.g);
+  for (const r of S.runners) if (r.done) { if (r.home) { const i = S.herd.length, g = r.g; g.position.set(world.rally.x - 2.4 + (i % 5) * 1.2, world.rally.y, world.rally.z - 2 + Math.floor(i / 5) % 6 * 1.2); g.rotation.y = Math.PI / 2; g.visible = i < 30; S.herd.push(g); } else scene.remove(r.g); }
   S.runners = S.runners.filter(r => !r.done);
   Hv.eye.material.color.setHex(S.turretCd > .75 ? 0xffffff : 0xff4fd8);
 }
@@ -2049,7 +2058,7 @@ function startGame(tutorial, mode = "district"){
     deerStart(true); helperShow("👥 파트너의 성소에 들어왔어요 · You joined your partner's sanctuary — everything you build counts for both. <b>Enter</b> = chat", 8); }
   else if (mode === "deer") { pedestal.visible = false; player.hasGun = false; gun.visible = false;
     deerStart();
-    helperShow("🦌 <small>Protect the baby deer! 🔨 build towers · 💎 make ammo · 🔧 build traps (the only thing that hurts the boss) · 🦌 learn from the deer. The missions are top left.</small>", 1e9); G.sanct.introTip = true; }   // stays up until the first aliens come
+    helperShow("🏆 <small><b>Goal: break the alien hive's gate</b> (the pink light, east) with a deer army from the 🦌 shelter — and don't let your baby deer fall. 🔨 towers · 💎 ammo · 🔧 traps (the only thing that hurts the boss) · 🦌 lessons. Missions: top left.</small>", 1e9); G.sanct.introTip = true; }   // stays up until the first aliens come
   else if (mode === "escape") { pedestal.visible = false; player.hasGun = true; gun.visible = true;
     const w0 = nextNewWord(); G.unlocked.push(w0); loadWord(w0); markKill(w0); placeBeam();
     objective(`🏃 탈출 모드 · Fight your way to the <b>cathedral altar</b> — follow the golden light. Read the word on their shirts! <small>1–9 / mouse wheel = switch word · first word: <b>${esc(w0.kr)}</b> = ${esc(meaning(w0))}</small>`);
