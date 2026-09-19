@@ -1278,14 +1278,14 @@ function victory(){
 const SANCT = { ammoQuiz: 30, trapCost: 4, trapRearm: 2.5, deerMax: 1000, towerDmg: [34, 54, 80], trapDmg: [100, 180, 320] };
 const TECHS = [
   { id: "tower2", icon: "🗼", ko: "탑 강화 I", en: "Towers Lv 2: +60% damage" },
-  { id: "trap2", icon: "🪤", ko: "함정 강화 I", en: "Traps Lv 2: re-arm twice as fast" },
+  { id: "trap2", icon: "💣", ko: "함정 강화 I", en: "Traps Lv 2: re-arm twice as fast" },
   { id: "slot3", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (3 on the road)" },
   { id: "battery", icon: "🔋", ko: "수정 배터리", en: "Every ammo quiz gives +50% ammo" },
   { id: "frost", icon: "❄️", ko: "얼음 함정", en: "A trap that fires also freezes aliens within 5 m for 3 s" },
   { id: "tower3", icon: "🗼", ko: "탑 강화 II", en: "Towers Lv 3: +50% damage, +4 m range", need: "tower2" },
-  { id: "trap3", icon: "🪤", ko: "함정 강화 II", en: "Traps Lv 3: half the ammo per shot", need: "trap2" },
+  { id: "trap3", icon: "💣", ko: "함정 강화 II", en: "Traps Lv 3: half the ammo per shot", need: "trap2" },
   { id: "slot4", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (4 on the road)", need: "slot3" },
-  { id: "pad5", icon: "🔨", ko: "다섯 번째 탑", en: "A 5th tower spot on the terrace" },
+  { id: "catcheap", icon: "🎯", ko: "투석기 절약", en: "Catapults: 1 ammo per shot (was 2)" },
   { id: "slot5", icon: "➕", ko: "함정 자리 +1", en: "+1 trap (5 on the road)", need: "slot4" },
 ];
 const has = id => !!(G.sanct && G.sanct.tech.has(id));
@@ -1402,7 +1402,7 @@ function renderPedestal(){
   const S = G.sanct, per = ammoPerQuiz(), left = Math.max(0, G.waveSize - G.waveKills), need = left * Math.ceil(alienHp(G.wave) / SANCT.towerDmg[towerLv()]);
   $("#noteBody").innerHTML = `<div class="qHead">💎 탄약 · Ammo: <b>${S.ammo}</b> ${S.ammo < need ? `· ⚠ ~${need} needed for ${left} aliens` : "· ✓ enough for now"}</div>
     <div class="dList">${fort.towers.map((t, i) => `<div>🗼 ${i + 1} · Lv ${towerLv() + 1} · ${t.kills || 0} kills</div>`).join("") || "<div>🔨 탑이 없어요 · no towers yet — E at a 🔨 spot</div>"}
-    <div>🪤 ${S.traps.length}/${trapSlots()} traps on the road${S.kits ? ` · 📦 ${S.kits} kit${S.kits > 1 ? "s" : ""} to place` : ""} · each shot = ${trapCost()} ammo</div></div>
+    <div>💣 ${S.traps.length}/${trapSlots()} traps on the road${S.kits ? ` · 📦 ${S.kits} kit${S.kits > 1 ? "s" : ""} to place` : ""} · each shot = ${trapCost()} ammo</div></div>
     <div class="shop" style="margin-top:10px"><button data-act="ammo"><span class="k">1</span><b>탄약 만들기 · Make ammo</b> <small>2 questions about one word (meaning, word type)</small><span class="c">+${per}</span></button></div>`;
 }
 function ammoQuiz(){
@@ -1417,9 +1417,9 @@ function ammoQuiz(){
 function openWorkshop(){ openPanel("workshop", "🔧 작업장 · Workshop"); renderWorkshop(); }
 function renderWorkshop(){
   const S = G.sanct, full = S.traps.length + S.kits >= trapSlots();
-  $("#noteBody").innerHTML = `<div class="qHead">🪤 ${S.traps.length}/${trapSlots()} on the road${S.kits ? ` · 📦 ${S.kits} to place` : ""} · Lv ${trapLv() + 1}${has("frost") ? " · ❄️ freezes" : ""}</div>
-    <div class="dList"><div>🪤 −${trapHit()} to every alien on it (💎 ${trapCost()}), re-arms in ${trapRearm()} s · 🎯 catapults: ${S.cats.length}${S.catKits ? ` · 📦 ${S.catKits} to place` : ""} — splash −${Math.round(catDmg())}, 💎 ${CATA.ammo} per shot</div></div>
-    <div class="shop" style="margin-top:10px"><button data-act="trap" ${full ? "disabled" : ""}><span class="k">1</span><b>함정 만들기 · Build a trap</b> <small>8 questions on this wave's 4 new words</small><span class="c">${full ? "FULL" : "🪤 +1"}</span></button>
+  $("#noteBody").innerHTML = `<div class="qHead">💣 ${S.traps.length}/${trapSlots()} on the road${S.kits ? ` · 📦 ${S.kits} to place` : ""} · Lv ${trapLv() + 1}${has("frost") ? " · ❄️ freezes" : ""}</div>
+    <div class="dList"><div>💣 −${trapHit()} to every alien on it (💎 ${trapCost()}), re-arms in ${trapRearm()} s · 🎯 catapults: ${S.cats.length}${S.catKits ? ` · 📦 ${S.catKits} to place` : ""} — splash −${Math.round(catDmg())}, 💎 ${catAmmo()} per shot</div></div>
+    <div class="shop" style="margin-top:10px"><button data-act="trap" ${full ? "disabled" : ""}><span class="k">1</span><b>함정 만들기 · Build a trap</b> <small>8 questions on this wave's 4 new words</small><span class="c">${full ? "FULL" : "💣 +1"}</span></button>
     <button data-act="cat"><span class="k">2</span><b>투석기 · Catapult</b> <small>5 questions · place it off the road, aim at the road</small><span class="c">🎯 +1</span></button></div>`;
 }
 function trapQuiz(){
@@ -1434,9 +1434,9 @@ function trapQuiz(){
 function placeTrap(at){
   const S = G.sanct; if (!S.kits) return;
   const x = at ? at.x : player.pos.x, z = at ? at.z : player.pos.z;
-  if (isClient()) { coopAct({ a: "place", x: r2(x), z: r2(z) }); SFX.reload(); objectiveFlash("🪤 함정 설치! · Trap placed"); return; }
+  if (isClient()) { coopAct({ a: "place", x: r2(x), z: r2(z) }); SFX.reload(); objectiveFlash("💣 함정 설치! · Trap placed"); return; }
   S.traps.push(makeTrap(x, z)); S.kits--;
-  SFX.reload(); objectiveFlash(`🪤 함정 설치! · Trap placed (${S.traps.length}/${trapSlots()})`); renderMissions();
+  SFX.reload(); objectiveFlash(`💣 함정 설치! · Trap placed (${S.traps.length}/${trapSlots()})`); renderMissions();
 }
 function makeTrap(x, z){
   const y = world.groundY(x, z), grp = new THREE.Group(); grp.position.set(x, y + .02, z);
@@ -1519,7 +1519,6 @@ function learnDeerWord(o){
 }
 function applyTech(t){
   const S = G.sanct; S.tech.add(t.id);
-  if (t.id === "pad5") addPad(world.pads[4][0], world.pads[4][1]);
   for (const tw of fort.towers) towerSignDeer(tw);
 }
 // ---- towers (shared ammo, shoot anything but the boss) ----
@@ -1559,7 +1558,7 @@ function spawnDeerBoss(){
   const S = G.sanct; G.bossOut = true; const [ex, ez] = world.entries[0], f = world.freeSpot(ex, ez);
   const a = new Alien(scene, new THREE.Vector3(f.x, world.groundY(f.x, f.z), f.z), pick(G.unlocked), { rise: true, special: true, shirt: "👑", hp: S.bossHp, speed: 2.4, skills: { orb: false, slam: true } });
   a.id = "boss" + G.wave; G.aliens.push(a);
-  objective(`👑 보스 등장! · The <b>boss</b> is coming (❤ ${S.bossHp}) — towers can't hurt it, only your 🪤 traps (−${SANCT.trapDmg[trapLv()]} each)`);
+  objective(`👑 보스 등장! · The <b>boss</b> is coming (❤ ${S.bossHp}) — towers can't hurt it, only your 💣 traps (−${SANCT.trapDmg[trapLv()]} each)`);
   setTimeout(() => { if (G.mode === "deer" && G.running && G.bossOut) objective(""); }, 8000);
   SFX.charge(); renderTop(); renderMissions();
 }
@@ -1684,10 +1683,10 @@ function checkDuelEnd(){
 // ---- interactions ----
 function deerInteract(){
   const S = G.sanct, W = world, near = (o, r) => o && Math.hypot(o.x - player.pos.x, o.z - player.pos.z) < r && Math.abs(o.y - player.feet) < 2;
-  for (const t of S.traps) if (near(t, 1.8)) return { kind: "pickup", o: t, label: "E · 🪤 함정 들기 · pick up this trap (to move it)" };
+  for (const t of S.traps) if (near(t, 1.8)) return { kind: "pickup", o: t, label: "E · 💣 함정 들기 · pick up this trap (to move it)" };
   for (const c of S.cats) if (near(c, 2.4)) return { kind: "cataim", o: c, label: "E · 🎯 투석기 조준 · aim this catapult (then 2 = pick up)" };
   if (S.kits && W.roadDist(player.pos.x, player.pos.z) < 2.6 && !S.traps.some(t => Math.hypot(t.x - player.pos.x, t.z - player.pos.z) < 3.2))
-    return { kind: "place", label: `E · 🪤 여기에 함정 놓기 · place a trap here (📦 ${S.kits})` };
+    return { kind: "place", label: `E · 💣 여기에 함정 놓기 · place a trap here (📦 ${S.kits})` };
   for (const p of fort.pads) if (near(p, 2.2)) return { kind: "build", o: p, label: "E · 🔨 탑 짓기 — 문제 2개 · build a tower (2 questions)" };
   if (near(W.pedestal, 3)) return { kind: "pedestal", label: `E · 💎 탄약 · ammo (${S.ammo}) — towers & traps` };
   if (near(W.workshop, 3.6)) return { kind: "workshop", label: "E · 🔧 작업장 · workshop — build traps" };
@@ -1701,6 +1700,7 @@ function deerInteract(){
 // ---- 🎯 catapults: 5 questions each, placed off the road, aimed at a spot on it; free splash shots (¼ of a tower) ----
 const CATA = { quiz: 5, range: 45, radius: 3.5, cd: 1.5, flight: .9, ammo: 2 };
 const WEST_GATE_WAVE = 3;
+const catAmmo = () => has("catcheap") ? 1 : CATA.ammo;
 const catDmg = () => SANCT.towerDmg[towerLv()] * .25;
 const trapHit = () => Math.round(alienHp(G.wave) * .6);   // a trap takes ~60 % of an alien: 2 hits (or a tower's help)
 function catQuiz(){
@@ -1736,8 +1736,8 @@ function catapultsTick(dt){   // host: fire at the spot whenever an alien is the
     c.cd -= dt;
     if (c.cd > 0) continue;
     if (!G.aliens.some(a => !a.dead && a.spawnT >= 1 && Math.hypot(a.pos.x - c.tx, a.pos.z - c.tz) < CATA.radius + 1)) { c.cd = .25; continue; }
-    if (S.ammo < CATA.ammo) { c.cd = .5; continue; }   // a shot costs 2 ammo
-    S.ammo -= CATA.ammo;
+    if (S.ammo < catAmmo()) { c.cd = .5; continue; }   // a shot costs 2 ammo (1 with the tech)
+    S.ammo -= catAmmo();
     c.cd = CATA.cd; c.swing = 1; const f = { x: c.x - Math.sin(c.g.rotation.y) * 1.2, y: c.y + 2.6, z: c.z - Math.cos(c.g.rotation.y) * 1.2 };
     launchBoulder(f.x, f.y, f.z, c.tx, c.ty, c.tz, catDmg()); fxOut({ cp: [r2(f.x), r2(f.y), r2(f.z), r2(c.tx), r2(c.ty), r2(c.tz)] });
   }
@@ -1819,7 +1819,7 @@ function renderMissions(){
     <div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words <small>— don't let it fall</small></div>
     ${row(fort.towers.length >= fort.towers.length + fort.pads.length, `🗼 탑 짓기 · build towers <b>${fort.towers.length}/${fort.towers.length + fort.pads.length}</b> <small>(🔨 E)</small>`)}
     ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
-    ${row(hits >= trapSlots(), `🪤 함정 · traps <b>${S.traps.length}</b>/${trapSlots()}${S.kits ? ` · 📦 ${S.kits} to place` : ""} · 🎯 <b>${S.cats.length}</b>${S.catKits ? ` · 📦 ${S.catKits}` : ""} <small>(workshop)</small>`)}
+    ${row(hits >= trapSlots(), `💣 함정 · traps <b>${S.traps.length}</b>/${trapSlots()}${S.kits ? ` · 📦 ${S.kits} to place` : ""} · 🎯 <b>${S.cats.length}</b>${S.catKits ? ` · 📦 ${S.catKits}` : ""} <small>(workshop)</small>`)}
     ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b> · 💰 ${G.coins}/${techCost()}`) : ""}
     ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>/${herdCap()}${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} · march in ${Math.ceil(S.marchT || 0)} s · 🏕 ${S.camps.filter(c => c.conquered).length}/${S.camps.length} <small>(8 questions per deer)</small>`)}
     <div class="mFoot">Tab 🎒 내 단어 · your words</div>`;
