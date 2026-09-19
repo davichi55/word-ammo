@@ -619,6 +619,7 @@ function drawMinimapStatic(){
   const rect = (x0, x1, z0, z1, col) => { const [a, b] = mmXY(x0, z0), [c2, d] = mmXY(x1, z1); g2.fillStyle = col; g2.fillRect(a, b, c2 - a, d - b); };
   for (const [x0, x1, z0, z1, col] of world.mm.areas || []) rect(x0, x1, z0, z1, col);   // raised ground, stairs & ramps
   if (world.mm.road2) { g2.strokeStyle = "#ffc26b"; g2.lineWidth = 2.5; g2.beginPath(); world.mm.road2.forEach(([x, z], i) => { const [a, b] = mmXY(x, z); if (i) g2.lineTo(a, b); else g2.moveTo(a, b); }); g2.stroke(); }
+  if (world.mm.roadB) { g2.strokeStyle = "#5fd4ff"; g2.lineWidth = 3; g2.beginPath(); world.mm.roadB.forEach(([x, z], i) => { const [a, b] = mmXY(x, z); if (i) g2.lineTo(a, b); else g2.moveTo(a, b); }); g2.stroke(); }
   if (world.mm.road) { g2.strokeStyle = "#5fd4ff"; g2.lineWidth = 3; g2.beginPath(); world.mm.road.forEach(([x, z], i) => { const [a, b] = mmXY(x, z); if (i) g2.lineTo(a, b); else g2.moveTo(a, b); }); g2.stroke(); }
   for (const b of world.mm.solid) rect(b[0], b[1], b[2], b[3], "#4a4560");
   for (const b of world.mm.enter) { rect(b[0], b[1], b[2], b[3], "#2d4a47"); }
@@ -1349,6 +1350,7 @@ function deerWave(){
   G.waveKills = 0; G.waveSpawned = 0; G.bossOut = false; G.waveSize = 45 + 3 * G.wave; G.calmT = G.wave === 1 ? 35 : 20; G.lastCalm = -1; G.spawnT = 2;
   S.bossHp = bossHpFor(G.wave); S.hp = Math.min(S.max, S.hp + 200);
   growDeer(); renderHP();
+  if (G.wave === WEST_GATE_WAVE) setTimeout(() => { if (G.mode === "deer" && G.running) helperShow("⚠️ 서쪽 문이 열렸어요! <small>A second gate opened in the <b>west</b> — some aliens now take a shorter road that joins the main road halfway.</small>", 10); }, 1500);
   if (fresh.length) openBrief(fresh); else objectiveFlash("📚 새 웨이브 단어가 없어요 — 사슴에게 배우세요 · No new wave words left — learn the rest from the deer");
   renderTop(); renderMissions();
 }
@@ -1414,7 +1416,7 @@ function openWorkshop(){ openPanel("workshop", "🔧 작업장 · Workshop"); re
 function renderWorkshop(){
   const S = G.sanct, full = S.traps.length + S.kits >= trapSlots();
   $("#noteBody").innerHTML = `<div class="qHead">🪤 ${S.traps.length}/${trapSlots()} on the road${S.kits ? ` · 📦 ${S.kits} to place` : ""} · Lv ${trapLv() + 1}${has("frost") ? " · ❄️ freezes" : ""}</div>
-    <div class="dList"><div>🪤 −${trapHit()} to every alien on it (💎 ${trapCost()}), re-arms in ${trapRearm()} s · 🎯 catapults: ${S.cats.length}${S.catKits ? ` · 📦 ${S.catKits} to place` : ""} — splash −${Math.round(catDmg())}, free to fire</div></div>
+    <div class="dList"><div>🪤 −${trapHit()} to every alien on it (💎 ${trapCost()}), re-arms in ${trapRearm()} s · 🎯 catapults: ${S.cats.length}${S.catKits ? ` · 📦 ${S.catKits} to place` : ""} — splash −${Math.round(catDmg())}, 💎 ${CATA.ammo} per shot</div></div>
     <div class="shop" style="margin-top:10px"><button data-act="trap" ${full ? "disabled" : ""}><span class="k">1</span><b>함정 만들기 · Build a trap</b> <small>8 questions on this wave's 4 new words</small><span class="c">${full ? "FULL" : "🪤 +1"}</span></button>
     <button data-act="cat"><span class="k">2</span><b>투석기 · Catapult</b> <small>5 questions · place it off the road, aim at the road</small><span class="c">🎯 +1</span></button></div>`;
 }
@@ -1523,7 +1525,7 @@ function towerSignDeer(t){ const old = t.sign.material.map; t.sign.material.map 
 function deerBuildTower(pad){ const t = buildTower(pad, G.waveWords[0] || G.unlocked[0]); t.kills = 0; towerSignDeer(t); objectiveFlash("🗼 탑 완성! · Tower built — it shoots every alien, using the shared 💎 ammo"); renderMissions(); return t; }
 // ---- aliens: follow the road, then go for the deer ----
 function deerTarget(a){
-  const S = G.sanct, R = world.road; if (!S) return player;
+  const S = G.sanct, R = a.route || world.road; if (!S) return player;   // west-gate aliens follow their own road
   if (a.wp == null) a.wp = 1;
   while (a.wp < R.length && Math.hypot(R[a.wp].x - a.pos.x, R[a.wp].z - a.pos.z) < 3.8) a.wp++;
   if (a.wp >= R.length) return S.deerTgt;
@@ -1695,7 +1697,8 @@ function deerInteract(){
   return null;
 }
 // ---- 🎯 catapults: 5 questions each, placed off the road, aimed at a spot on it; free splash shots (¼ of a tower) ----
-const CATA = { quiz: 5, range: 45, radius: 3.5, cd: 1.5, flight: .9 };
+const CATA = { quiz: 5, range: 45, radius: 3.5, cd: 1.5, flight: .9, ammo: 2 };
+const WEST_GATE_WAVE = 3;
 const catDmg = () => SANCT.towerDmg[towerLv()] * .25;
 const trapHit = () => Math.round(alienHp(G.wave) * .6);   // a trap takes ~60 % of an alien: 2 hits (or a tower's help)
 function catQuiz(){
@@ -1731,6 +1734,8 @@ function catapultsTick(dt){   // host: fire at the spot whenever an alien is the
     c.cd -= dt;
     if (c.cd > 0) continue;
     if (!G.aliens.some(a => !a.dead && a.spawnT >= 1 && Math.hypot(a.pos.x - c.tx, a.pos.z - c.tz) < CATA.radius + 1)) { c.cd = .25; continue; }
+    if (S.ammo < CATA.ammo) { c.cd = .5; continue; }   // a shot costs 2 ammo
+    S.ammo -= CATA.ammo;
     c.cd = CATA.cd; c.swing = 1; const f = { x: c.x - Math.sin(c.g.rotation.y) * 1.2, y: c.y + 2.6, z: c.z - Math.cos(c.g.rotation.y) * 1.2 };
     launchBoulder(f.x, f.y, f.z, c.tx, c.ty, c.tz, catDmg()); fxOut({ cp: [r2(f.x), r2(f.y), r2(f.z), r2(c.tx), r2(c.ty), r2(c.tz)] });
   }
@@ -1854,11 +1859,12 @@ function deerTick(dt, rdt){
   if (G.spawnT <= 0 && alive < cap && G.waveSpawned < G.waveSize) {
     G.spawnT = Math.max(.55, 1.6 - G.wave * .07);
     // from wave 3 some aliens come as a pack of 3 at once: one tower at the gate can't take them all
-    const pack = G.wave >= 3 && Math.random() < Math.min(.45, .15 + G.wave * .03) ? 3 : 1, [ex, ez] = world.entries[0];
+    const west = G.wave >= WEST_GATE_WAVE && Math.random() < .4;   // from wave 3 about 40 % come through the west gate
+    const pack = G.wave >= 3 && Math.random() < Math.min(.45, .15 + G.wave * .03) ? 3 : 1, [ex, ez] = world.entries[west ? 1 : 0];
     for (let i = 0; i < pack && G.waveSpawned < G.waveSize; i++) {
       G.waveSpawned++;
       const a = spawnAlienShirt(new THREE.Vector3(ex + (pack > 1 ? (i - 1) * 2.2 : rnd(-2.5, 2.5)), 0, ez + rnd(-1, 1) - i * .8), nextWeakWord(), { rise: true, speed: alienSpeed(G.wave), skills: { orb: false, slam: true } });
-      a.hp = a.maxHp = alienHp(G.wave);
+      a.hp = a.maxHp = alienHp(G.wave); if (west) a.route = world.roadB;
     }
     if (pack > 1) G.spawnT += .8;
   }
