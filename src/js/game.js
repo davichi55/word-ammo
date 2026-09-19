@@ -1282,7 +1282,15 @@ const has = id => !!(G.sanct && G.sanct.tech.has(id));
 const towerLv = () => has("tower3") ? 2 : has("tower2") ? 1 : 0;
 const trapLv = () => has("trap3") ? 2 : has("trap2") ? 1 : 0;
 const trapSlots = () => 2 + (has("slot3") ? 1 : 0) + (has("slot4") ? 1 : 0) + (has("slot5") ? 1 : 0);
-const deerSize = () => Math.min(2.4, .55 + .045 * G.unlocked.length);
+// The deer grows in 10 stages spread over your word list (capped at 120 words), so a 20-word game and a 100-word game
+// pace the same way. Each stage raises the herd limit; the hive's shield only drops at stage 8.
+const targetWords = () => Math.max(10, Math.min(G.pool.length, 120));
+const deerStage = () => Math.min(10, Math.floor(G.unlocked.length / (targetWords() / 10)));
+const herdCap = () => 6 + 6 * deerStage();
+const SHIELD_STAGE = 8;
+const gateShielded = () => deerStage() < SHIELD_STAGE;
+const armySize = () => { const S = G.sanct; return S.herd.length + (isClient() ? (S.runnerMeshes || []).length : S.runners.length); };
+const deerSize = () => .55 + .17 * deerStage();
 const shortWord = w => w.kr.replace(/\s/g, "").length <= 7 && !/[?!_~…]/.test(w.kr);   // fits a 퇴마사 sticker
 const bossHpFor = wave => Math.round(200 * Math.pow(1.45, wave - 1));
 // every wave the aliens get tougher AND faster, so the towers / tech have to keep up
@@ -1309,6 +1317,9 @@ function deerStart(client = false){   // client = the co-op partner: same scene,
   // a pink pillar over the hive: the goal, visible from the sanctuary
   S.hiveBeam = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 80, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff4fd8, transparent: true, opacity: .16, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
   S.hiveBeam.position.set(W.hive.x, 40, W.hive.z + 3); scene.add(S.hiveBeam); S.signs.push(S.hiveBeam);
+  // 🛡 the hive's shield: a glowing bubble over the gate until the deer is big enough
+  S.shield = new THREE.Mesh(new THREE.SphereGeometry(6.5, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7ce8ff, transparent: true, opacity: .25, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+  S.shield.position.set(W.hive.x, 0, W.hive.z); scene.add(S.shield); S.signs.push(S.shield);
   S.crystal = new THREE.Mesh(new THREE.OctahedronGeometry(.36), new THREE.MeshBasicMaterial({ color: 0xc9a2ff })); S.crystal.position.set(W.pedestal.x, W.pedestal.y + 2.4, W.pedestal.z); scene.add(S.crystal);
   S.crystalGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xb388ff, transparent: true, opacity: .7, depthWrite: false, blending: THREE.AdditiveBlending })); S.crystalGlow.scale.set(2, 2, 1); S.crystal.add(S.crystalGlow);
   S.trapBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
@@ -1342,7 +1353,17 @@ function closeBrief(){
   objective(`🦌 Wave ${G.wave}: ${G.waveSize} aliens, then the boss 👑 (❤ ${G.sanct.bossHp}, traps only)`);
   setTimeout(() => { if (G.mode === "deer" && G.running && G.panel !== "brief") objective(""); }, 7000);
 }
-function growDeer(){ const S = G.sanct; if (S && S.deerMesh) S.deerMesh.scale.setScalar(deerSize()); }
+function growDeer(){
+  const S = G.sanct; if (!S || !S.deerMesh) return;
+  const st = deerStage(); S.deerMesh.scale.setScalar(deerSize());
+  if (S.stage != null && st > S.stage) {
+    SFX.pickup(); burst(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 2), 0x9fdcff, 120, 10);
+    floater(S.deerMesh.position.clone().setY(S.deerMesh.position.y + 4), `🦌 Lv ${st}`, "#9fdcff", 40, 2);
+    helperShow(`🦌 사슴이 자랐어요! <small>The deer grew — stage <b>${st}/10</b> · herd limit <b>${herdCap()}</b>${st === SHIELD_STAGE ? " · 🛡 the hive's shield is DOWN — charge!" : ""}</small>`, 7);   // Lumi says it (the objective line is often busy)
+  }
+  if (st !== S.stage && S.signs && S.signs[0]) { const old = S.signs[0].material.map; S.signs[0].material.map = signTexture("🦌 E", `Lv ${st}/10 · 수업`); S.signs[0].material.needsUpdate = true; old.dispose(); }
+  S.stage = st;
+}
 // ---- quizzes ----
 function pickQuizWord(){   // 60 % this wave's words, else older ones (struggled-with first)
   const older = G.unlocked.filter(w => !G.waveWords.includes(w));
@@ -1439,7 +1460,7 @@ function lessonOptions(){
 function openLessons(){ openPanel("lessons", "🦌 사슴의 수업 · The deer's lessons"); renderLessons(); }
 function renderLessons(){
   const S = G.sanct, opts = lessonOptions(); G.lessonOpts = opts;
-  $("#noteBody").innerHTML = `<div class="qHead">🦌 ${G.unlocked.length} words · size ${deerSize().toFixed(2)} · ${S.learned.length} lessons · 💰 ${G.coins} (1 per alien)</div>
+  $("#noteBody").innerHTML = `<div class="qHead">🦌 stage ${deerStage()}/10 · ${G.unlocked.length}/${targetWords()} words · ${S.learned.length} lessons · 💰 ${G.coins} (1 per alien)</div>
     <div class="qPrompt"><small>새 단어 하나 + 문제 2개 + 퇴마사 한 판 (아는 단어 모두) · one new word, 2 questions, then a 퇴마사 fight with every word you know. Q = quit anytime.</small></div>
     <div class="shop">${opts.map((o, i) => `<button data-act="lesson${i}" ${o.tech && G.coins < techCost() ? "disabled" : ""}><span class="k">${i + 1}</span><b>${o.tech ? `${o.tech.icon} ${esc(o.tech.ko)}` : "🌱 그냥 자라기 · just grow"}</b> <small>${o.tech ? esc(o.tech.en) + " — " : ""}must know <b>${esc(o.w.kr)}</b></small><span class="c">${o.tech ? "💰 " + techCost() : "free"}</span></button>`).join("") || "<div>🎓 사슴이 가르칠 게 없어요 · the deer has taught you everything!</div>"}</div>`;
 }
@@ -1555,7 +1576,7 @@ function deerAct(act){
   else if (/^lesson\d$/.test(act) && G.panel === "lessons") { const o = (G.lessonOpts || [])[+act.slice(6)];
     if (o && o.tech && G.coins < techCost()) { SFX.empty(); objectiveFlash(`💰 ${techCost()} 필요해요 · You need 💰${techCost()} (1 per alien)`); return; }
     if (o) lessonCard(o); }
-  else if (act === "train" && G.panel === "shelter") trainQuiz();
+  else if (act === "train" && G.panel === "shelter") { if (armySize() >= herdCap()) { SFX.empty(); objectiveFlash(`🦌 무리가 꽉 찼어요 · The herd is full (${herdCap()}) — grow the deer (learn words) for more`); return; } trainQuiz(); }
   else if (act === "charge" && G.panel === "shelter") charge();
 }
 // ---- missions (top left) ----
@@ -1565,13 +1586,13 @@ function renderMissions(){
   const dmg = SANCT.trapDmg[trapLv()], hits = S.traps.length + S.kits, bossHp = bossLiveHp();
   const next = lessonOptions().find(o => o.tech);
   const row = (ok, html) => `<div class="${ok ? "ok" : ""}">${ok ? "✓" : "•"} ${html}</div>`;
-  $("#missions").innerHTML = `<div class="mGoal">🏆 목표 · GOAL: 둥지의 문을 부숴요 · break the alien hive's gate 🚪 ${S.gateHp}/${S.gateMax} <small>(🦌 shelter → charge)</small></div>
+  $("#missions").innerHTML = `<div class="mGoal">🏆 목표 · GOAL: 둥지의 문을 부숴요 · break the alien hive's gate ${gateShielded() ? `— 🛡 shielded until the deer reaches stage ${SHIELD_STAGE} (now ${deerStage()}/10)` : `🚪 ${S.gateHp}/${S.gateMax} <small>(🦌 shelter → charge)</small>`}</div>
     <div class="mHead">🦌 사슴 · Deer ❤ ${Math.ceil(S.hp)}/${S.max} · 🌱 ${G.unlocked.length} words <small>— don't let it fall</small></div>
     ${row(fort.towers.length >= fort.towers.length + fort.pads.length, `🗼 탑 짓기 · build towers <b>${fort.towers.length}/${fort.towers.length + fort.pads.length}</b> <small>(🔨 E)</small>`)}
     ${row(S.ammo >= need, `💎 탄약 · ammo <b>${S.ammo}</b> / ~${need} for ${left} aliens <small>(pedestal)</small>`)}
     ${row(hits * dmg >= bossHp, `🪤 보스 · boss ❤ <b>${bossHp}</b> — traps ${hits} × ${dmg} = ${hits * dmg}${S.kits ? ` · 📦 ${S.kits} to place` : ""} <small>(workshop)</small>`)}
     ${next ? row(false, `🦌 수업 · lesson: ${next.tech.icon} ${esc(next.tech.ko)} — must know <b>${esc(next.w.kr)}</b> · 💰 ${G.coins}/${techCost()}`) : ""}
-    ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} <small>(8 questions each)</small>`)}
+    ${row(S.hiveBroken, `⚔️ 사슴 군대 · deer army: herd <b>${S.herd.length}</b>/${herdCap()}${(S.runnerMeshes || S.runners).length ? ` (+${(isClient() ? S.runnerMeshes : S.runners).length} out)` : ""} <small>(8 questions each)</small>`)}
     <div class="mFoot">Tab 🎒 내 단어 · your words</div>`;
 }
 function deerTick(dt, rdt){
@@ -1583,6 +1604,7 @@ function deerTick(dt, rdt){
   const bossLeft = bossLiveHp();
   S.trapBeam.visible = (S.traps.length + S.kits) * SANCT.trapDmg[trapLv()] < bossLeft && S.traps.length + S.kits < trapSlots();
   S.trapBeam.material.opacity = .18 + Math.sin(G.time * 3) * .07;
+  S.shield.visible = gateShielded() && !S.hiveBroken; S.shield.material.opacity = .22 + Math.sin(G.time * 2) * .06;
   S.crystal.rotation.y += rdt * 1.5; S.crystal.position.y = world.pedestal.y + 2.4 + Math.sin(G.time * 2) * .12; S.crystalGlow.material.opacity = S.ammo > 0 ? .7 : .2;
   S.deerMesh.rotation.y = Math.sin(G.time * .4) * .5; S.deerMesh.position.y = world.deer.y + .4 + Math.abs(Math.sin(G.time * 1.3)) * .05;
   // interaction prompt
@@ -1619,12 +1641,13 @@ function deerTick(dt, rdt){
 const techCost = () => 40 * ((G.sanct ? G.sanct.tech.size : 0) + 1);   // 40, 80, 120 … gold
 function openShelter(){ openPanel("shelter", "🦌 사슴 목장 · Deer shelter"); renderShelter(); }
 function renderShelter(){
-  const S = G.sanct, n = S.herd.length;
-  $("#noteBody").innerHTML = `<div class="qHead">🦌 herd <b>${n}</b> · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax}</div>
+  const S = G.sanct, n = S.herd.length, full = armySize() >= herdCap();
+  $("#noteBody").innerHTML = `<div class="qHead">🦌 herd <b>${n}</b> / ${herdCap()} (stage ${deerStage()}/10) · 🚪 hive gate ❤ ${S.gateHp}/${S.gateMax}${gateShielded() ? " · 🛡 shielded" : ""}</div>
+    ${gateShielded() ? `<div class="dList"><div>🛡 둥지의 방패는 사슴이 ${SHIELD_STAGE}단계가 되면 사라져요 · the hive's shield drops when the deer reaches stage ${SHIELD_STAGE} (learn words). Deer that reach a shielded gate just run home.</div></div>` : ""}
     <div class="dList"><div>🏆 목표: 둥지의 문을 부수면 승리! · GOAL: break the hive gate to win</div>
     <div>둥지의 탑이 사슴을 맞히면 목장으로 돌아와요 (약 1초에 1마리) · the spire hits about 1 deer per second — a hit deer runs back to the herd, so only a big herd gets many through</div>
     <div>문에 닿은 사슴 1마리 = −1 · every deer that reaches the gate: −1 (it stays there)</div></div>
-    <div class="shop" style="margin-top:10px"><button data-act="train"><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions on your words</small><span class="c">🦌 +1</span></button>
+    <div class="shop" style="margin-top:10px"><button data-act="train" ${full ? "disabled" : ""}><span class="k">1</span><b>사슴 훈련 · Train a deer</b> <small>8 questions on your words${full ? " — herd full: grow the deer for more" : ""}</small><span class="c">${full ? "FULL" : "🦌 +1"}</span></button>
     <button data-act="charge" ${n ? "" : "disabled"}><span class="k">2</span><b>돌격! · Charge!</b> <small>send the whole herd down the gold road</small><span class="c">🦌 ×${n}</span></button></div>`;
 }
 function trainQuiz(){
@@ -1656,7 +1679,9 @@ function runnersTick(dt){
     const p = R[Math.max(0, Math.min(r.wp, R.length - 1))], dx = p.x - r.x, dz = p.z - r.z, d = Math.hypot(dx, dz), sp = (r.back ? 5 : 7) * dt;
     if (d < sp + .3) {
       if (r.back) { r.wp--; if (r.wp < 0) { r.done = true; r.home = true; continue; } }   // made it home: back into the herd
-      else { r.wp++; if (r.wp >= R.length) { hitGate(); r.done = true; continue; } } }
+      else { r.wp++; if (r.wp >= R.length) {
+        if (gateShielded()) { r.back = true; r.wp = R.length - 2; burst(new THREE.Vector3(r.x, r.g.position.y + 1, r.z), 0x7ce8ff, 16, 5); continue; }   // 🛡 bounces off, runs home
+        hitGate(); r.done = true; continue; } } }
     else { r.x += dx / d * sp; r.z += dz / d * sp; r.g.rotation.y = Math.atan2(dx, dz); }
     r.g.position.set(r.x, world.groundY(r.x, r.z) + Math.abs(Math.sin(G.time * 14 + r.x)) * .25, r.z);
   }
@@ -1732,7 +1757,7 @@ function deerHostAction(ev){
   else if (ev.a === "place") placeTrap({ x: ev.x, z: ev.z });
   else if (ev.a === "pick") { const t = S.traps[ev.i]; if (t) pickUpTrap(t); }
   else if (ev.a === "dbuild") { const p = fort.pads[ev.i]; if (p) deerBuildTower(p); }
-  else if (ev.a === "train") addHerdDeer();
+  else if (ev.a === "train") { if (armySize() < herdCap()) addHerdDeer(); }
   else if (ev.a === "charge") charge(true);
   else if (ev.a === "learn") { const w = wordById(ev.w), tech = TECHS.find(t => t.id === ev.t) || null;
     if (w && !G.unlocked.includes(w) && (!tech || (G.coins >= techCost() && !S.tech.has(tech.id)))) learnDeerWord({ w, tech }); }
