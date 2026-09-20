@@ -5,7 +5,7 @@
 // movement (you can't step up more than STEP, you can drop down), line of sight and a small nav graph.
 import * as THREE from "../../node_modules/three/build/three.module.js";
 import { mergeGeometries } from "../../node_modules/three/examples/jsm/utils/BufferGeometryUtils.js";
-import { glowTexture } from "./enemies.js?v=202609200244";
+import { glowTexture } from "./enemies.js?v=202609201447";
 
 let seed = 1337;
 const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };

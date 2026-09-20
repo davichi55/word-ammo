@@ -6,11 +6,11 @@ import { EffectComposer } from "../../node_modules/three/examples/jsm/postproces
 import { RenderPass } from "../../node_modules/three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "../../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "../../node_modules/three/examples/jsm/postprocessing/OutputPass.js";
-import { buildWorld } from "./world.js?v=202609200244";
-import { buildSanctuaryWorld } from "./sanctuary-world.js?v=202609200244";
-import { Alien, Orb, glowTexture } from "./enemies.js?v=202609200244";
-import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js?v=202609200244";
-import { Net } from "./coop.js?v=202609200244";
+import { buildWorld } from "./world.js?v=202609201447";
+import { buildSanctuaryWorld } from "./sanctuary-world.js?v=202609201447";
+import { Alien, Orb, glowTexture } from "./enemies.js?v=202609201447";
+import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js?v=202609201447";
+import { Net } from "./coop.js?v=202609201447";
 
 const D = window.WORD_DATA;
 const $ = s => document.querySelector(s);
@@ -2641,4 +2641,13 @@ window.__api = { get world(){ return world; }, get Q(){ return Q; }, answerQuiz,
     tag.textContent = "🔄 새 버전 · New version — click to reload"; tag.classList.add("new"); tag.onclick = () => location.reload();
   }).catch(() => {});
   setTimeout(look, 5000); setInterval(look, 5 * 60 * 1000);
+})();
+
+// on a touch device the game can't be played at all (mouse look + keyboard): say so clearly on the menu
+(function phoneNote(){
+  const el = document.getElementById("needPc"); if (!el) return;
+  if (matchMedia("(pointer: coarse)").matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    el.classList.add("phone");
+    el.innerHTML = "📱➡️💻 <b>휴대폰에서는 플레이할 수 없어요</b><br>This game can't be played on a phone or tablet — open it on a computer (it needs a keyboard and mouse).";
+  }
 })();

@@ -246,3 +246,6 @@ html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--in
 
 #buildTag{position:fixed;left:6px;bottom:4px;z-index:9999;font:11px/1.2 system-ui,sans-serif;color:rgba(255,255,255,.45);pointer-events:none;user-select:none}
 #buildTag.new{pointer-events:auto;cursor:pointer;color:#fff;background:#1d9c7a;padding:5px 9px;border-radius:6px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+
+#needPc{margin:-4px 0 10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);font-size:13px;color:#cfd8e6;text-align:center}
+#needPc.phone{background:#7a2f2f;border-color:#c96a6a;color:#ffe9e9;font-size:15px}
