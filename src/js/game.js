@@ -6,11 +6,11 @@ import { EffectComposer } from "../../node_modules/three/examples/jsm/postproces
 import { RenderPass } from "../../node_modules/three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "../../node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "../../node_modules/three/examples/jsm/postprocessing/OutputPass.js";
-import { buildWorld } from "./world.js?v=202609201805";
-import { buildSanctuaryWorld } from "./sanctuary-world.js?v=202609201805";
-import { Alien, Orb, glowTexture } from "./enemies.js?v=202609201805";
-import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js?v=202609201805";
-import { Net } from "./coop.js?v=202609201805";
+import { buildWorld } from "./world.js?v=202609201807";
+import { buildSanctuaryWorld } from "./sanctuary-world.js?v=202609201807";
+import { Alien, Orb, glowTexture } from "./enemies.js?v=202609201807";
+import { initAudio, setVolume, SFX, say, wordClip, lineClip, preload } from "./audio.js?v=202609201807";
+import { Net } from "./coop.js?v=202609201807";
 
 const D = window.WORD_DATA;
 const $ = s => document.querySelector(s);
@@ -798,7 +798,7 @@ function buildQuiz(){
   if (wrongMeans.length < 3) wrongMeans = wrongMeans.concat(distinct(G.pool, 3 - wrongMeans.length, meaning, [w, ...wrongMeans]));
   const qs = [
     { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrongMeans.map(meaning)]), ans: meaning(w) },
-    { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>${esc(meaning(w))} · what type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" },
+    { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" },
   ];
   // earlier words: struggled-with ones first; shown in YOUR language, answer in Korean
   const weight = x => { const s = stats[x.id]; return (s ? 1 + s.w - s.r * .3 : 1) + Math.random(); };
@@ -1088,7 +1088,7 @@ function knownQuestion(w0, kinds = ["mean", "kr", "pos"]){   // one question abo
     return { w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }; }
   if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
     return { w, prompt: `<b>${esc(meaning(w))}</b> — 한국어로? <small>Which Korean word?</small>`, opts: shuffleA([w.kr, ...wrong.map(x => x.kr)]), ans: w.kr, audioAfter: true }; }
-  return { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>${esc(meaning(w))} · what type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" };
+  return { w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" };
 }
 function towerQuiz(pad){
   openPanel("towerquiz", "🔨 탑 짓기 퀴즈 · Build quiz");
@@ -1099,7 +1099,7 @@ function towerQuiz(pad){
       qs.push({ w, audio: true, prompt: `<b>${esc(w.kr)}</b> — 뜻은? <small>What does it mean?</small>`, opts: shuffleA([meaning(w), ...wrong.map(meaning)]), ans: meaning(w) }); }
     else if (kind === "kr") { let wrong = distinct(known.filter(x => x.id !== w.id), 3, x => x.kr, [w]); if (wrong.length < 3) wrong = wrong.concat(distinct(G.pool, 3 - wrong.length, x => x.kr, [w, ...wrong]));
       qs.push({ w, prompt: `<b>${esc(meaning(w))}</b> — 한국어로? <small>Which Korean word?</small>`, opts: shuffleA([w.kr, ...wrong.map(x => x.kr)]), ans: w.kr, audioAfter: true }); }
-    else qs.push({ w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>${esc(meaning(w))} · what type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" });
+    else qs.push({ w, prompt: `<b>${esc(w.kr)}</b> — 품사는? <small>What type of word is it?</small>`, opts: POS_LIST, fixed: true, ans: POS_KO[w.pos] || "표현" });
   }
   Q = { qs, i: 0, wrong: 0, round: 1, lock: false, onPass: () => { closePanel();
     if (isClient()) { coopAct({ a: "build", i: fort.pads.indexOf(pad), w: (G.loaded || G.unlocked[0]).id }); objectiveFlash("🗼 탑 완성! · Tower built"); return; }
